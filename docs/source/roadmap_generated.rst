@@ -1,7 +1,80 @@
 .. raw:: html
 
    <div class='github-issues-container'>
-   <p class='issues-updated'>Last updated: 2025-10-20 15:04 UTC</p>
+   <p class='issues-updated'>Last updated: 2025-11-20 08:58 UTC</p>
+
+   <div class='github-issue-card'>
+      <div class='issue-header'>
+         <span class='issue-number'>#149</span>
+         <h3 class='issue-title'>Simulation class refactoring</h3>
+      </div>
+      <div class='issue-labels'>
+         <span class='issue-label'>roadmap</span>
+         <span class='issue-label'>refactor</span>
+      </div>
+      <div class='issue-body'>
+         <p>The `Simulation` class is big (1.8k LOC) and has many responsibilities:<br><br>- managing all the blocks, connections and events and their states<br>- serialization and deserialization<br>- linearization and delinearization<br>- timestepping including system evaluation, event handling, ...<br>- 4 different timestepping strategies and 1 steady state solve method<br><br>This can probably be broken down to be more modular a...</p>
+      </div>
+      <div class='issue-footer'>
+         <span class='issue-date'>Created: Nov 07, 2025</span>
+         <a href='https://github.com/pathsim/pathsim/issues/149' class='issue-link' target='_blank'>View on GitHub →</a>
+      </div>
+   </div>
+
+   <div class='github-issue-card'>
+      <div class='issue-header'>
+         <span class='issue-number'>#146</span>
+         <h3 class='issue-title'>FSAL for ode solvers</h3>
+      </div>
+      <div class='issue-labels'>
+         <span class='issue-label'>numerics</span>
+         <span class='issue-label'>roadmap</span>
+      </div>
+      <div class='issue-body'>
+         <p>Some runge kutta solvers such as `RKBS32` and `RKDP54` have the first-same-as-last (FSAL) property, where the last slope of the previous stage is the first slope of the next one. This saves one function evaluation per successful step and therefore increases solver efficiency. <br><br>Currently this is not implemented in pathsim, but it would give some additional 5% to 20% speedup for some solvers.</p>
+      </div>
+      <div class='issue-footer'>
+         <span class='issue-date'>Created: Nov 04, 2025</span>
+         <a href='https://github.com/pathsim/pathsim/issues/146' class='issue-link' target='_blank'>View on GitHub →</a>
+      </div>
+   </div>
+
+   <div class='github-issue-card'>
+      <div class='issue-header'>
+         <span class='issue-number'>#143</span>
+         <h3 class='issue-title'>real-time simulation</h3>
+      </div>
+      <div class='issue-labels'>
+         <span class='issue-label'>enhancement</span>
+         <span class='issue-label'>roadmap</span>
+      </div>
+      <div class='issue-body'>
+         <p>- implement real-time mode for the simulation with a tick-rate<br>- warnings when realtime is not reached, reducing tick-rate</p>
+      </div>
+      <div class='issue-footer'>
+         <span class='issue-date'>Created: Nov 01, 2025</span>
+         <a href='https://github.com/pathsim/pathsim/issues/143' class='issue-link' target='_blank'>View on GitHub →</a>
+      </div>
+   </div>
+
+   <div class='github-issue-card'>
+      <div class='issue-header'>
+         <span class='issue-number'>#133</span>
+         <h3 class='issue-title'>More Examples</h3>
+      </div>
+      <div class='issue-labels'>
+         <span class='issue-label'>documentation</span>
+         <span class='issue-label'>good first issue</span>
+         <span class='issue-label'>roadmap</span>
+      </div>
+      <div class='issue-body'>
+         <p>You can never have enough examples. <br><br>Here is a list of ideas for example systems that want to be implemented and documented:<br>- Kalman Filter<br>- Chemical process<br>- DC motor control<br>- Inverted pendulum with controler<br>- Battery charging<br>- Phase-locked loop</p>
+      </div>
+      <div class='issue-footer'>
+         <span class='issue-date'>Created: Okt 20, 2025</span>
+         <a href='https://github.com/pathsim/pathsim/issues/133' class='issue-link' target='_blank'>View on GitHub →</a>
+      </div>
+   </div>
 
    <div class='github-issue-card'>
       <div class='issue-header'>
@@ -17,7 +90,7 @@
       </div>
       <div class='issue-footer'>
          <span class='issue-date'>Created: Okt 15, 2025</span>
-         <a href='https://github.com/milanofthe/pathsim/issues/124' class='issue-link' target='_blank'>View on GitHub →</a>
+         <a href='https://github.com/pathsim/pathsim/issues/124' class='issue-link' target='_blank'>View on GitHub →</a>
       </div>
    </div>
 
@@ -35,7 +108,7 @@
       </div>
       <div class='issue-footer'>
          <span class='issue-date'>Created: Okt 09, 2025</span>
-         <a href='https://github.com/milanofthe/pathsim/issues/109' class='issue-link' target='_blank'>View on GitHub →</a>
+         <a href='https://github.com/pathsim/pathsim/issues/109' class='issue-link' target='_blank'>View on GitHub →</a>
       </div>
    </div>
 
@@ -54,7 +127,7 @@
       </div>
       <div class='issue-footer'>
          <span class='issue-date'>Created: Okt 08, 2025</span>
-         <a href='https://github.com/milanofthe/pathsim/issues/105' class='issue-link' target='_blank'>View on GitHub →</a>
+         <a href='https://github.com/pathsim/pathsim/issues/105' class='issue-link' target='_blank'>View on GitHub →</a>
       </div>
    </div>
 
@@ -72,7 +145,7 @@
       </div>
       <div class='issue-footer'>
          <span class='issue-date'>Created: Okt 08, 2025</span>
-         <a href='https://github.com/milanofthe/pathsim/issues/104' class='issue-link' target='_blank'>View on GitHub →</a>
+         <a href='https://github.com/pathsim/pathsim/issues/104' class='issue-link' target='_blank'>View on GitHub →</a>
       </div>
    </div>
 
@@ -91,7 +164,7 @@
       </div>
       <div class='issue-footer'>
          <span class='issue-date'>Created: Sep 25, 2025</span>
-         <a href='https://github.com/milanofthe/pathsim/issues/91' class='issue-link' target='_blank'>View on GitHub →</a>
+         <a href='https://github.com/pathsim/pathsim/issues/91' class='issue-link' target='_blank'>View on GitHub →</a>
       </div>
    </div>
 
@@ -109,7 +182,7 @@
       </div>
       <div class='issue-footer'>
          <span class='issue-date'>Created: Sep 15, 2025</span>
-         <a href='https://github.com/milanofthe/pathsim/issues/84' class='issue-link' target='_blank'>View on GitHub →</a>
+         <a href='https://github.com/pathsim/pathsim/issues/84' class='issue-link' target='_blank'>View on GitHub →</a>
       </div>
    </div>
 
@@ -128,7 +201,7 @@
       </div>
       <div class='issue-footer'>
          <span class='issue-date'>Created: Sep 12, 2025</span>
-         <a href='https://github.com/milanofthe/pathsim/issues/82' class='issue-link' target='_blank'>View on GitHub →</a>
+         <a href='https://github.com/pathsim/pathsim/issues/82' class='issue-link' target='_blank'>View on GitHub →</a>
       </div>
    </div>
 
@@ -147,42 +220,7 @@
       </div>
       <div class='issue-footer'>
          <span class='issue-date'>Created: Sep 12, 2025</span>
-         <a href='https://github.com/milanofthe/pathsim/issues/81' class='issue-link' target='_blank'>View on GitHub →</a>
-      </div>
-   </div>
-
-   <div class='github-issue-card'>
-      <div class='issue-header'>
-         <span class='issue-number'>#79</span>
-         <h3 class='issue-title'>FMI / FMU integration</h3>
-      </div>
-      <div class='issue-labels'>
-         <span class='issue-label'>enhancement</span>
-         <span class='issue-label'>roadmap</span>
-      </div>
-      <div class='issue-body'>
-         <p>It would be nice to be able to import existing FMUs as pathsim blocks and to export simulations as FMUs using the functional mockup interface (FMI).<br><br>This would enable cross compatibility between pathsim and other simulation tools.<br><br>The most straight forward way to to this is with [FMPy](https://github.com/CATIA-Systems/FMPy?tab=License-1-ov-file#readme).<br><br>The resulting blocks would be:<br>- `CoSimul...</p>
-      </div>
-      <div class='issue-footer'>
-         <span class='issue-date'>Created: Sep 03, 2025</span>
-         <a href='https://github.com/milanofthe/pathsim/issues/79' class='issue-link' target='_blank'>View on GitHub →</a>
-      </div>
-   </div>
-
-   <div class='github-issue-card'>
-      <div class='issue-header'>
-         <span class='issue-number'>#51</span>
-         <h3 class='issue-title'>conda package</h3>
-      </div>
-      <div class='issue-labels'>
-         <span class='issue-label'>roadmap</span>
-      </div>
-      <div class='issue-body'>
-         <p>It would be nice to have a conda package for pathsim!</p>
-      </div>
-      <div class='issue-footer'>
-         <span class='issue-date'>Created: Jul 23, 2025</span>
-         <a href='https://github.com/milanofthe/pathsim/issues/51' class='issue-link' target='_blank'>View on GitHub →</a>
+         <a href='https://github.com/pathsim/pathsim/issues/81' class='issue-link' target='_blank'>View on GitHub →</a>
       </div>
    </div>
 

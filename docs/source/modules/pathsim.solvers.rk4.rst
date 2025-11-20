@@ -1,5 +1,5 @@
-pathsim.solvers.rk4 module
-==========================
+RK4
+===
 
 .. automodule:: pathsim.solvers.rk4
    :members:

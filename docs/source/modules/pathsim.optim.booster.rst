@@ -1,5 +1,5 @@
-pathsim.optim.booster module
-============================
+Connection Booster
+==================
 
 .. automodule:: pathsim.optim.booster
    :members:

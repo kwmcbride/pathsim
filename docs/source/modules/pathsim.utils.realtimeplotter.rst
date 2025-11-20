@@ -1,5 +1,5 @@
-pathsim.utils.realtimeplotter module
-====================================
+Real-time Plotter
+=================
 
 .. automodule:: pathsim.utils.realtimeplotter
    :members:

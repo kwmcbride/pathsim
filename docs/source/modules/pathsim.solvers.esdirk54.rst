@@ -1,5 +1,5 @@
-pathsim.solvers.esdirk54 module
-===============================
+ESDIRK54
+========
 
 .. automodule:: pathsim.solvers.esdirk54
    :members:

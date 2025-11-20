@@ -1,5 +1,5 @@
-pathsim.events.condition module
-===============================
+Condition Events
+================
 
 .. automodule:: pathsim.events.condition
    :members:

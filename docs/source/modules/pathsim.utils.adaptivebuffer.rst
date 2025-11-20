@@ -1,5 +1,5 @@
-pathsim.utils.adaptivebuffer module
-===================================
+Adaptive Buffer
+===============
 
 .. automodule:: pathsim.utils.adaptivebuffer
    :members:

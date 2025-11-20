@@ -1,5 +1,5 @@
-pathsim.solvers.bdf module
-==========================
+BDF
+===
 
 .. automodule:: pathsim.solvers.bdf
    :members:

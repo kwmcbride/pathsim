@@ -1,5 +1,5 @@
-pathsim.optim.operator module
-=============================
+Operator
+========
 
 .. automodule:: pathsim.optim.operator
    :members:

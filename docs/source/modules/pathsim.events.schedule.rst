@@ -1,5 +1,5 @@
-pathsim.events.schedule module
-==============================
+Scheduled Events
+================
 
 .. automodule:: pathsim.events.schedule
    :members:

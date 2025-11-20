@@ -1,5 +1,5 @@
-pathsim.solvers.rkv65 module
-============================
+RKV65 (Verner)
+==============
 
 .. automodule:: pathsim.solvers.rkv65
    :members:

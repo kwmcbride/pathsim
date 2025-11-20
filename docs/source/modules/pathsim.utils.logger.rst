@@ -1,5 +1,5 @@
-pathsim.utils.logger module
-============================
+Logger
+======
 
 .. automodule:: pathsim.utils.logger
    :members:

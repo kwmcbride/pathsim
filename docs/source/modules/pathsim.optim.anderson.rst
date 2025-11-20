@@ -1,5 +1,5 @@
-pathsim.optim.anderson module
-=============================
+Anderson Acceleration
+=====================
 
 .. automodule:: pathsim.optim.anderson
    :members:

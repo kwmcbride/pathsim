@@ -1,5 +1,5 @@
-pathsim.events._event module
-============================
+Event Base
+==========
 
 .. automodule:: pathsim.events._event
    :members:

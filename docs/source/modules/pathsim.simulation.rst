@@ -1,5 +1,5 @@
-pathsim.simulation
-==================
+Simulation
+==========
 
 .. automodule:: pathsim.simulation
    :members:

@@ -1,5 +1,5 @@
-pathsim.solvers.rkbs32 module
-=============================
+RKBS32 (Bogacki-Shampine)
+=========================
 
 .. automodule:: pathsim.solvers.rkbs32
    :members:

@@ -1,5 +1,5 @@
-pathsim.utils.register module
-=============================
+Register
+========
 
 .. automodule:: pathsim.utils.register
    :members:

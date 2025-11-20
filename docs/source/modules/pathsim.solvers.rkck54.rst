@@ -1,5 +1,5 @@
-pathsim.solvers.rkck54 module
-=============================
+RKCK54 (Cash-Karp)
+==================
 
 .. automodule:: pathsim.solvers.rkck54
    :members:

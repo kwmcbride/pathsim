@@ -1,5 +1,5 @@
-pathsim.utils.serialization module
-====================================
+Serialization
+=============
 
 .. automodule:: pathsim.utils.serialization
    :members:

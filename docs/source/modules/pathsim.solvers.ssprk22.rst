@@ -1,5 +1,5 @@
-pathsim.solvers.ssprk22 module
-==============================
+SSPRK22
+=======
 
 .. automodule:: pathsim.solvers.ssprk22
    :members:

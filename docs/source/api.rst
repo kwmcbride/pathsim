@@ -2,8 +2,6 @@
 API Reference
 =============
 
-----
-
 Core Components
 ---------------
 

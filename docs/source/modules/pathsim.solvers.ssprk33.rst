@@ -1,5 +1,5 @@
-pathsim.solvers.ssprk33 module
-==============================
+SSPRK33
+=======
 
 .. automodule:: pathsim.solvers.ssprk33
    :members:
