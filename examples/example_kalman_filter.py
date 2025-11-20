@@ -35,10 +35,18 @@ measurement_std = 0.2  # standard deviation of position sensor noise
 # Kalman filter parameters
 F = np.array([[1, dt], [0, 1]])        # state transition (constant velocity model)
 H = np.array([[1, 0]])                 # measurement matrix (measure position only)
-Q = np.diag([0.01, 0.01])              # process noise covariance
+
+# Process noise covariance - models uncertainty in constant velocity assumption
+# Derived from continuous-time noise with intensity q = 0.1
+q = 0.1  # process noise intensity (m/s^2)^2
+Q = np.array([
+    [dt**3/3, dt**2/2],
+    [dt**2/2, dt]
+]) * q
+
 R = np.array([[measurement_std**2]])   # measurement noise covariance
 x0_kf = np.array([0, 0])               # initial estimate [position, velocity]
-P0_kf = np.eye(2) * 5                  # initial covariance
+P0_kf = np.diag([1.0, 1.0])            # initial covariance (more realistic uncertainty)
 
 # Build the system -----------------------------------------------------------------------
 
@@ -46,28 +54,27 @@ P0_kf = np.eye(2) * 5                  # initial covariance
 vel = Constant(v_true)
 pos = Integrator(x0_true)
 
-# Noisy measurement
-noise = WhiteNoise(spectral_density=measurement_std**2)
+# Noisy measurement (spectral_density must be scaled by dt for discrete-time white noise)
+noise = WhiteNoise(spectral_density=measurement_std**2 * dt)
 measured_pos = Adder()
 
 # Kalman filter
 kf = KalmanFilter(F, H, Q, R, x0=x0_kf, P0=P0_kf)
 
-# Scopes for recording
-sc_true = Scope(labels=["true position", "true velocity"])
-sc_meas = Scope(labels=["measured position"])
-sc_est = Scope(labels=["estimated position", "estimated velocity"])
+# Scopes for recording (organized by what we're comparing)
+sc_pos = Scope(labels=["true position", "measured position", "estimated position"])
+sc_vel = Scope(labels=["true velocity", "estimated velocity"])
 
-blocks = [vel, pos, noise, measured_pos, kf, sc_true, sc_meas, sc_est]
+blocks = [vel, pos, noise, measured_pos, kf, sc_pos, sc_vel]
 
 # Connections
 connections = [
-    Connection(vel, pos, sc_true[1]),
-    Connection(pos, measured_pos[0], sc_true[0]),
+    Connection(vel, pos, sc_vel[0]),
+    Connection(pos, measured_pos[0], sc_pos[0]),
     Connection(noise, measured_pos[1]),
-    Connection(measured_pos, kf, sc_meas),
-    Connection(kf[0], sc_est[0]),
-    Connection(kf[1], sc_est[1])
+    Connection(measured_pos, kf, sc_pos[1]),
+    Connection(kf[0], sc_pos[2]),
+    Connection(kf[1], sc_vel[1])
 ]
 
 # Initialize simulation
@@ -85,41 +92,32 @@ if __name__ == "__main__":
     # Run the simulation
     Sim.run(duration=20)
 
-    # Read data from scopes
-    t_true, [pos_true, vel_true] = sc_true.read()
-    t_meas, [pos_meas] = sc_meas.read()
-    t_est, [pos_est, vel_est] = sc_est.read()
-
-    # Create comparison plots
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 6), tight_layout=True, dpi=200)
-
-    # Position comparison
-    ax1.set_title('Kalman Filter: Position and Velocity Estimation')
-    ax1.plot(t_meas, pos_meas, ".", label='Noisy Measurement')
-    ax1.plot(t_true, pos_true, "-", label='True Position')
-    ax1.plot(t_est, pos_est, "--", label='Kalman Estimate')
+    # Plot position comparison using scope's plot method
+    fig1, ax1 = sc_pos.plot()
+    ax1.set_title('Kalman Filter: Position Estimation')
     ax1.set_ylabel('Position [m]')
-    ax1.legend()
+    ax1.set_xlabel('Time [s]')
 
-    # Velocity comparison
-    ax2.plot(t_true, vel_true, "-", label='True Velocity')
-    ax2.plot(t_est, vel_est, "--", label='Kalman Estimate')
+    # Plot velocity comparison using scope's plot method
+    fig2, ax2 = sc_vel.plot()
+    ax2.set_title('Kalman Filter: Velocity Estimation')
     ax2.set_ylabel('Velocity [m/s]')
     ax2.set_xlabel('Time [s]')
-    ax2.legend()
 
-    # Calculate estimation errors
+    # Calculate and plot estimation errors
+    t_pos, [pos_true, pos_meas, pos_est] = sc_pos.read()
+    t_vel, [vel_true, vel_est] = sc_vel.read()
+
     pos_error = np.abs(pos_est - pos_true)
     vel_error = np.abs(vel_est - vel_true)
 
-    # Estimation error over time
-    fig2, (ax3, ax4) = plt.subplots(2, 1, figsize=(8, 6), tight_layout=True, dpi=200)
+    fig3, (ax3, ax4) = plt.subplots(2, 1, figsize=(8, 6), tight_layout=True, dpi=120)
 
-    ax3.plot(t_est, pos_error)
+    ax3.plot(t_pos, pos_error)
     ax3.set_ylabel('Position Error [m]')
     ax3.set_title('Kalman Filter Estimation Error')
 
-    ax4.plot(t_est, vel_error)
+    ax4.plot(t_vel, vel_error)
     ax4.set_ylabel('Velocity Error [m/s]')
     ax4.set_xlabel('Time [s]')
 
