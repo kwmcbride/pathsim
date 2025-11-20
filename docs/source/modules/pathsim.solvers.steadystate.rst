@@ -1,5 +1,5 @@
-pathsim.solvers.steadystate module
-==================================
+Steady State
+============
 
 .. automodule:: pathsim.solvers.steadystate
    :members:

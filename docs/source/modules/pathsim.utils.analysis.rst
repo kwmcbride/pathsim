@@ -1,5 +1,5 @@
-pathsim.utils.analysis module
-=============================
+Analysis
+========
 
 .. automodule:: pathsim.utils.analysis
    :members:

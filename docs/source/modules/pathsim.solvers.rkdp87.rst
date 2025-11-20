@@ -1,5 +1,5 @@
-pathsim.solvers.rkdp87 module
-=============================
+RKDP87 (Dormand-Prince)
+=======================
 
 .. automodule:: pathsim.solvers.rkdp87
    :members:

@@ -1,5 +1,5 @@
-pathsim.solvers.gear module
-===========================
+Gear
+====
 
 .. automodule:: pathsim.solvers.gear
    :members:

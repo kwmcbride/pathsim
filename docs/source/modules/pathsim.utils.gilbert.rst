@@ -1,5 +1,5 @@
-pathsim.utils.gilbert module
-============================
+Gilbert Realization
+===================
 
 .. automodule:: pathsim.utils.gilbert
    :members:

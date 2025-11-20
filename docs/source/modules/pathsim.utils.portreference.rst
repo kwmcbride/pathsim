@@ -1,5 +1,5 @@
-pathsim.utils.portreference module
-==================================
+Port Reference
+==============
 
 .. automodule:: pathsim.utils.portreference
    :members:

@@ -1,5 +1,5 @@
-pathsim.solvers.rkf21 module
-============================
+RKF21 (Fehlberg)
+================
 
 .. automodule:: pathsim.solvers.rkf21
    :members:

@@ -1,5 +1,5 @@
-pathsim.solvers.dirk2 module
-============================
+DIRK2
+=====
 
 .. automodule:: pathsim.solvers.dirk2
    :members:

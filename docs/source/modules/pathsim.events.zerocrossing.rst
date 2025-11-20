@@ -1,5 +1,5 @@
-pathsim.events.zerocrossing module
-==================================
+Zero-Crossing Events
+====================
 
 .. automodule:: pathsim.events.zerocrossing
    :members:

@@ -1,5 +1,5 @@
-pathsim.solvers._solver module
-==============================
+Solver Base
+===========
 
 .. automodule:: pathsim.solvers._solver
    :members:

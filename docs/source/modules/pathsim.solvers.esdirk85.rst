@@ -1,5 +1,5 @@
-pathsim.solvers.esdirk85 module
-===============================
+ESDIRK85
+========
 
 .. automodule:: pathsim.solvers.esdirk85
    :members:

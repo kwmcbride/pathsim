@@ -1,5 +1,5 @@
-pathsim.solvers.rkf78 module
-============================
+RKF78 (Fehlberg)
+================
 
 .. automodule:: pathsim.solvers.rkf78
    :members:

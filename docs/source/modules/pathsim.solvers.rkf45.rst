@@ -1,5 +1,5 @@
-pathsim.solvers.rkf45 module
-============================
+RKF45 (Fehlberg)
+================
 
 .. automodule:: pathsim.solvers.rkf45
    :members:

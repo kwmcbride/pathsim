@@ -1,5 +1,5 @@
-pathsim.utils.progresstracker module
-====================================
+Progress Tracker
+================
 
 .. automodule:: pathsim.utils.progresstracker
    :members:

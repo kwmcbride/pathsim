@@ -1,5 +1,5 @@
-pathsim.solvers._rungekutta module
-==================================
+Runge-Kutta Base
+================
 
 .. automodule:: pathsim.solvers._rungekutta
    :members:

@@ -1,5 +1,5 @@
-pathsim.solvers.euler module
-============================
+Euler
+=====
 
 .. automodule:: pathsim.solvers.euler
    :members:

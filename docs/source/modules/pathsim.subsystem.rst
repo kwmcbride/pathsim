@@ -1,5 +1,5 @@
-pathsim.subsystem
-=================
+Subsystem
+=========
 
 .. automodule:: pathsim.subsystem
    :members:

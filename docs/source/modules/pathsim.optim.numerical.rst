@@ -1,5 +1,5 @@
-pathsim.optim.numerical module
-==============================
+Numerical Differentiation
+=========================
 
 .. automodule:: pathsim.optim.numerical
    :members:

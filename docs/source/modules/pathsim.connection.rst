@@ -1,5 +1,5 @@
-pathsim.connection
-==================
+Connection
+==========
 
 .. automodule:: pathsim.connection
    :members:
