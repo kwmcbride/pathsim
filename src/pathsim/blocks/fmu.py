@@ -305,5 +305,9 @@ class ModelExchangeFMU(DynamicalSystem):
         # Reset time events
         if self.time_event is not None:
             self.time_event.times_evt.clear()
-            if self._initial_time_event is not None:
-                bisect.insort(self.time_event.times_evt, self._initial_time_event)
+
+        # Schedule initial time event from re-initialization or cached initial
+        if event_info and event_info.next_event_time_defined:
+            self._update_time_events(event_info.next_event_time)
+        elif self._initial_time_event is not None:
+            self._update_time_events(self._initial_time_event)
