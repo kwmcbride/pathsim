@@ -537,7 +537,6 @@ class Clip(Math):
 
 
 class Matrix(Math):
-
     """Linear matrix operation (matrix-vector product).
 
     This block supports vector inputs. This is the operation it does:
@@ -548,8 +547,8 @@ class Matrix(Math):
 
     Parameters
     ----------
-    A : array_like, shape(n, n)
-        matrix, or 2d array
+    A : np.ndarray
+        matrix, 2d array with dim=2
         
     Attributes
     ----------
