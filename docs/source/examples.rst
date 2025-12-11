@@ -109,6 +109,18 @@ Hybrid dynamical systems with discrete events and zero-crossing detection.
 
       Friction model with stick-slip transitions demonstrating state-dependent switching.
 
+   .. grid-item-card:: 🎱 Billards & Collisions
+      :link: examples/billards
+      :link-type: doc
+
+      Ball bouncing inside a circular boundary with elastic collisions and zero-crossing events.
+
+   .. grid-item-card:: 🎡 Elastic Pendulum
+      :link: examples/elastic_pendulum
+      :link-type: doc
+
+      Spring-mass pendulum combining radial oscillations with angular motion and coupled dynamics.
+
 .. toctree::
    :hidden:
    :maxdepth: 1
@@ -118,6 +130,8 @@ Hybrid dynamical systems with discrete events and zero-crossing detection.
    examples/switched_bouncing_ball.ipynb
    examples/thermostat.ipynb
    examples/stick_slip.ipynb
+   examples/billards.ipynb
+   examples/elastic_pendulum.ipynb
 
 ----
 
