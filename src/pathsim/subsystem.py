@@ -122,10 +122,11 @@ class Subsystem(Block):
 
     Parameters
     ----------
-    blocks : list[Block] 
+    blocks : list[Block] | None
         internal blocks of the subsystem
-    connections : list[Connection]
+    connections : list[Connection] | None
         internal connections of the subsystem
+    events : list[Event] | None
     tolerance_fpi : float
         absolute tolerance for convergence of algebraic loops
         default see ´SIM_TOLERANCE_FPI´ in ´_constants.py´
@@ -149,6 +150,7 @@ class Subsystem(Block):
     def __init__(self, 
         blocks=None, 
         connections=None,
+        events=None,
         tolerance_fpi=SIM_TOLERANCE_FPI, 
         iterations_max=SIM_ITERATIONS_MAX
         ):
@@ -200,6 +202,10 @@ class Subsystem(Block):
         #check if interface is defined
         if self.interface is None:
             raise ValueError("Subsystem 'blocks' list needs to contain 'Interface' block!")
+
+
+        #collect events if specified
+        self._events = [] if events is None else events
 
         #assemble internal graph
         self._assemble_graph()
@@ -365,10 +371,10 @@ class Subsystem(Block):
         internal blocks of the subsystem, for discrete time 
         blocks such as triggers / comparators, clocks, etc.
         """
-        _events = []
+        _all_events = self._events.copy()
         for block in self.blocks:
-            _events.extend(block.events)
-        return _events
+            _all_events.extend(block.events)
+        return _all_events
 
 
     # methods for inter-block data transfer -------------------------------------------------
