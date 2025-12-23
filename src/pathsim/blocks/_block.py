@@ -11,13 +11,12 @@
 # IMPORTS ===============================================================================
 
 from ..utils.register import Register
-from ..utils.serialization import Serializable
 from ..utils.portreference import PortReference
 
 
 # BASE BLOCK CLASS ======================================================================
 
-class Block(Serializable):
+class Block:
     """Base 'Block' object that defines the inputs, outputs and the connect method.
 
     Block interconnections are handeled via the io interface of the blocks. 

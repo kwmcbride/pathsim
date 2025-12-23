@@ -9,19 +9,14 @@
 
 # IMPORTS ===============================================================================
 
-import inspect
-import json
-
 import numpy as np
 
 from .. _constants import EVT_TOLERANCE
 
-from ..utils.serialization import Serializable
-
 
 # EVENT MANAGER CLASS ===================================================================
 
-class Event(Serializable):
+class Event:
     """This is the base class of the event handling system.
     
     Monitors system state by evaluating an event function (func_evt) with scalar output.

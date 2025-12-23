@@ -12,11 +12,8 @@
 
 import numpy as np
 
-import json
 import datetime
 import logging
-
-from collections import defaultdict
 
 from pathsim import __version__
 
@@ -248,13 +245,6 @@ class Simulation:
         self._assemble_graph()
 
 
-    def __str__(self):
-        """String representation of the simulation using the 
-        dict model format and readable json formatting
-        """
-        return json.dumps(self.to_dict(), indent=2, sort_keys=False)
-
-
     def __contains__(self, other):
         """Check if blocks, connections or events are 
         already part of the simulation 
@@ -366,168 +356,6 @@ class Simulation:
         """
         for block in self.blocks:
             if block: block.plot(*args, **kwargs)
-
-
-    # serialization/deserialization -----------------------------------------------
-
-    def save(self, path="", **metadata):
-        """Save the dictionary representation of the simulation instance 
-        to an external file
-        
-        Parameters
-        ----------
-        path : str
-            filepath to save data to
-        metadata : dict
-            metadata for the simulation model
-        """
-
-        #add current pathsim version
-        metadata["version"] = __version__
-
-        #add current timestamp
-        metadata["timestamp"] = datetime.datetime.now().isoformat()
-
-        with open(path, "w", encoding="utf-8") as file:
-            json.dump(self.to_dict(**metadata), file, indent=2, ensure_ascii=False)
-
-
-    @classmethod
-    def load(cls, path="", **kwargs):
-        """Load and instantiate a Simulation from an external file 
-        in json format
-        
-        Parameters
-        ----------
-        path : str
-            filepath to load data from
-        kwargs : dict
-            additional args for the simulation, overwriting metadata
-
-        Returns
-        -------
-        out : Simulation
-            reconstructed object from dict representation
-        """
-        with open(path, "r", encoding="utf-8") as file:
-            return cls.from_dict(json.load(file), **kwargs)
-        return None
-
-
-    def to_dict(self, **metadata):
-        """Convert simulation to a complete model representation as a dict
-        with additional metadata.
-
-        Parameters
-        ----------
-        metadata : dict
-            metadata for the simulation model
-
-        Returns
-        -------
-        data : dict
-            dict that describes the simulation model
-        """
-        
-        #serialize system components
-        blocks = [block.to_dict() for block in self.blocks]
-        events = [event.to_dict() for event in self.events]
-        connections = [conn.to_dict() for conn in self.connections]
-                
-        #create the full model
-        return {
-            "type": "Simulation",
-            "metadata": metadata,
-            "structure": {
-                "blocks": blocks,
-                "events": events,
-                "connections": connections
-                },
-            "params": {
-                "dt": self.dt,
-                "dt_min": self.dt_min,
-                "dt_max": self.dt_max,
-                "Solver": self.Solver.__name__,
-                "tolerance_fpi": self.tolerance_fpi,
-                "iterations_max": self.iterations_max,
-                **self.solver_kwargs
-                }
-            }
-
-
-    @classmethod
-    def from_dict(cls, data, **kwargs):
-        """Create simulation from model data dict
-
-        Parameters
-        ----------
-        data : dict
-            model definition in json format
-        kwargs : dict
-            additional args for the simulation, overwriting metadata
-
-        Returns
-        -------
-        simulation : Simulation
-            instance of the Simulation class with mode definition
-        """
-        from . import solvers
-
-        #get system structure
-        structure = data.get("structure", {})
-        
-        #deserialize blocks and create block ID mapping
-        blocks, id_to_block = [], {}
-        for block_data in structure.get("blocks", []):
-            block = Block.from_dict(block_data)
-            blocks.append(block)
-            id_to_block[block_data["id"]] = block
-        
-        #deserialize connections
-        connections = []
-        for conn_data in structure.get("connections", []):
-            
-            #get source block and port
-            source_block = id_to_block[conn_data["source"]["block"]]
-            source_ports = conn_data["source"]["ports"]
-            source = PortReference(source_block, source_ports)
-            
-            #get targets
-            targets = []
-            for trg in conn_data["targets"]:
-                target_block = id_to_block[trg["block"]]
-                target_ports = trg["ports"]
-                targets.append(
-                    PortReference(target_block, target_ports)
-                    )
-            
-            #create connection
-            connections.append(
-                Connection(source, *targets)
-                )
-        
-        #deserialize events
-        events = []
-        for event_data in structure.get("events", []):
-            events.append(Event.from_dict(event_data))
-        
-        #get simulation parameters
-        params = data.get("params", {})
-
-        #get solver class
-        solver_name = params.get("Solver", "SSPRK22")
-        params["Solver"] = getattr(solvers, solver_name)
-
-        #update with additional kwargs
-        params.update(kwargs)
-
-        #create simulation
-        return cls(
-            blocks=blocks,
-            connections=connections,
-            events=events,
-            **params
-            )
 
 
     # adding system components ----------------------------------------------------

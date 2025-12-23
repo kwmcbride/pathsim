@@ -129,8 +129,21 @@ class Register:
 
 
     def resize(self, size):
+        """Resize the internal data array to accommodate more entries.
+
+        Creates a new zero-filled array instead of in-place resize to avoid
+        numpy ValueError when other references to the array exist (e.g., from
+        fancy indexing in PortReference).
+
+        Parameters
+        ----------
+        size : int
+            new size for the internal data array
+        """
         if size > len(self._data):
-            self._data.resize(size)          
+            new_data = np.zeros(size)
+            new_data[:len(self._data)] = self._data
+            self._data = new_data          
 
 
     def reset(self):
