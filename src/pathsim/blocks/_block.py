@@ -10,6 +10,8 @@
 
 # IMPORTS ===============================================================================
 
+import inspect
+
 from ..utils.register import Register
 from ..utils.portreference import PortReference
 
@@ -190,6 +192,7 @@ class Block:
         nx = len(self.engine) if self.engine else 0
         return 1, nx
 
+
     @property
     def shape(self):
         """Get the number of input and output ports of the block
@@ -200,6 +203,58 @@ class Block:
             number of input and output ports
         """ 
         return len(self.inputs), len(self.outputs)
+
+
+    @classmethod
+    @lru_cache()
+    def info(cls):
+        """Get block metadata for introspection and UI integration.
+
+        Returns a dictionary containing block type information, port mappings,
+        and parameter definitions. Results are cached per class.
+
+        Returns
+        -------
+        info : dict
+            Block metadata with the following keys:
+            - type : str
+                Class name of the block
+            - description : str
+                Block docstring
+            - shape : tuple
+                Input/output shape (n_inputs, n_outputs)
+            - size : int
+                State vector size
+            - in_labels : dict
+                Input port name to index mapping
+            - out_labels : dict
+                Output port name to index mapping
+            - parameters : dict
+                Parameter names mapped to their default values
+        """
+
+        # Get __init__ signature for parameters
+        sig = inspect.signature(cls.__init__)
+        params = {
+            name: {
+                "default": None if param.default is inspect.Parameter.empty else param.default
+                }
+            for name, param in sig.parameters.items() 
+            if name not in ("self", "kwargs", "args")
+            }
+        
+        # Default initialization
+        blk = cls()
+
+        return {
+            "type": cls.__name__,
+            "description": cls.__doc__ or "",
+            "shape": blk.shape,
+            "size": blk.size,
+            "in_labels": blk.inputs._mapping,
+            "out_labels": blk.outputs._mapping,
+            "parameters": params,
+            }
 
 
     # methods for visualization ---------------------------------------------------------
