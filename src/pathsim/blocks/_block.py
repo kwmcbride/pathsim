@@ -440,8 +440,7 @@ class Block:
         Yields an empty generator by default, needs to be implemented by 
         special recording blocks.
         """
-        return
-        yield
+        yield from ()
 
 
     # methods for inter-block data transfer ---------------------------------------------
