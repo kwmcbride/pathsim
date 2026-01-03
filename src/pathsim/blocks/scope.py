@@ -57,7 +57,10 @@ class Scope(Block):
     
     def __init__(self, sampling_rate=None, t_wait=0.0, labels=None):
         super().__init__()
-        
+                
+        #this block records data
+        self._rec = True
+
         #time delay until start recording
         self.t_wait = t_wait
 

@@ -101,6 +101,9 @@ class Spectrum(Block):
 
     def __init__(self, freq=[], t_wait=0.0, alpha=0.0, labels=[]):
         super().__init__()
+
+        #this block records data
+        self._rec = True
         
         #time delay until start recording
         self.t_wait = t_wait

@@ -70,6 +70,8 @@ class Block:
         list of internal events, for mixed signal blocks
     _active : bool
         flag that sets the block active or inactive
+    _rec : bool 
+        flag to indicate this block records data
     op_alg : Operator | DynamicOperator | None
         internal callable operator for algebraic components of block
     op_dyn : DynamicOperator | None
@@ -87,6 +89,9 @@ class Block:
 
         #flag to set block active
         self._active = True
+
+        #flag to indicate this block records data
+        self._rec = False
 
         #internal discrete events (for mixed signal blocks)
         self.events = []

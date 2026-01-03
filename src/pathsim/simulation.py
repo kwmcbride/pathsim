@@ -217,6 +217,9 @@ class Simulation:
         #collection of blocks with internal events
         self._blocks_evt = set()
 
+        #collection of blocks that record data
+        self._blocks_rec = set()
+
         #flag for setting the simulation active
         self._active = True
 
@@ -354,12 +357,16 @@ class Simulation:
         block.set_solver(self.Solver, self.engine, **self.solver_kwargs)
 
         #add to dynamic list if solver was initialized
-        if block.engine and block not in self._blocks_dyn:
+        if block.engine:
             self._blocks_dyn.add(block)
 
         #add to eventful list if internal events
         if block.events:
             self._blocks_evt.add(block)
+
+        #add to recording list
+        if block._rec:
+            self._blocks_rec.add(block)
 
         #add block to global blocklist
         self.blocks.add(block)
@@ -1457,6 +1464,23 @@ class Simulation:
             "'Simulation.step' method will be deprecated with release version 1.0.0, use 'Simulation.timestep' instead!"
             )
         return self.timestep(dt, adaptive)
+
+
+    # data extraction -------------------------------------------------------------
+
+    def collect(self):
+        """Collect all current simulation results from the internal recording blocks
+    
+        Returns
+        -------
+        results : dict
+        """
+
+        scopes = {
+            id(block): block.read() for block in self._blocks_rec
+        }
+
+
 
 
     # simulation execution --------------------------------------------------------
