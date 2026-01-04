@@ -78,7 +78,7 @@ class ExplicitSolverTest(unittest.TestCase):
         success, err, scale = self.solver.integrate_singlestep(func, time=0, dt=0.1)
         self.assertTrue(success)
         self.assertEqual(err, 0.0)
-        self.assertEqual(scale, 1.0)
+        self.assertIsNone(scale)  # No rescale needed
 
     def test_integrate(self):
         def func(x, t):

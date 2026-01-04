@@ -274,7 +274,7 @@ class Spectrum(Block):
             return self.engine.step(f, dt)
 
         #no error estimate
-        return True, 0.0, 1.0
+        return True, 0.0, None
 
 
     def sample(self, t, dt):
@@ -499,6 +499,6 @@ class RealtimeSpectrum(Spectrum):
             #compute update step with integration engine
             f = self._kernel(self.engine.state, self.inputs.to_array(), _t)
             return self.engine.step(f, dt)
-            
+
         #no error estimate
-        return True, 0.0, 1.0
+        return True, 0.0, None

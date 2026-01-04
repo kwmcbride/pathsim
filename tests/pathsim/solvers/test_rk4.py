@@ -72,7 +72,7 @@ class TestRK4(unittest.TestCase):
             #test if expected return at intermediate stages
             self.assertTrue(success)
             self.assertEqual(err, 0.0)
-            self.assertEqual(scale, 1.0)
+            self.assertIsNone(scale)  # No rescale needed
 
 
     def test_integrate_fixed(self):

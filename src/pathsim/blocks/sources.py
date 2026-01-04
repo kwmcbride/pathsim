@@ -480,14 +480,14 @@ class SinusoidalPhaseNoiseSource(Block):
         Returns
         -------
         tuple
-            (accepted, error, scale_factor) - always (True, 0.0, 1.0) for noise
+            (accepted, error, scale_factor) - always (True, 0.0, None) for noise
         """
         #compute update step with integration engine
         f = self.noise_2
         self.engine.step(f, dt)
 
         #no error control for noise source
-        return True, 0.0, 1.0
+        return True, 0.0, None
 
 
 class ChirpPhaseNoiseSource(Block):
@@ -698,13 +698,13 @@ class ChirpPhaseNoiseSource(Block):
         Returns
         -------
         tuple
-            (accepted, error, scale_factor) - always (True, 0.0, 1.0) for chirp
+            (accepted, error, scale_factor) - always (True, 0.0, None) for chirp
         """
         f = self.f0 + self.BW * (1 + self._triangle_wave(t, 1/self.T))/2 + self.sig_cum * self.noise_2
         self.engine.step(f, dt)
 
         #no error control for chirp source
-        return True, 0.0, 1.0
+        return True, 0.0, None
         
 
 class ChirpSource(ChirpPhaseNoiseSource):

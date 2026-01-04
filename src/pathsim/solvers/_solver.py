@@ -345,19 +345,19 @@ class Solver:
     # methods for adaptive timestep solvers --------------------------------------------
 
     def error_controller(self):
-        """Returns the estimated local truncation error (abs and rel) and scaling factor 
+        """Returns the estimated local truncation error (abs and rel) and scaling factor
         for the timestep, only relevant for adaptive timestepping methods.
 
-        Returns 
+        Returns
         -------
         success : bool
             True if the timestep was successful
         error : float
             estimated error of the internal error controller
-        scale : float
-            estimated timestep rescale factor for error control
+        scale : float | None
+            estimated timestep rescale factor for error control, None if no rescale needed
         """
-        return True, 0.0, 1.0
+        return True, 0.0, None
 
 
     def revert(self):
@@ -375,29 +375,29 @@ class Solver:
     # methods for timestepping ---------------------------------------------------------
 
     def step(self, f, dt):
-        """Performs the explicit timestep for (t+dt) based 
+        """Performs the explicit timestep for (t+dt) based
         on the state and input at (t).
 
-        Returns the local truncation error estimate and the 
+        Returns the local truncation error estimate and the
         rescale factor for the timestep if the solver is adaptive.
 
         Parameters
         ----------
         f : numeric, array[numeric]
             evaluation of rhs function
-        dt : float 
+        dt : float
             integration timestep
 
-        Returns 
+        Returns
         -------
         success : bool
             True if the timestep was successful
         error : float
             estimated error of the internal error controller
-        scale : float
-            estimated timestep rescale factor for error control
+        scale : float | None
+            estimated timestep rescale factor for error control, None if no rescale needed
         """
-        return True, 0.0, 1.0
+        return True, 0.0, None
 
 
     # methods for interpolation --------------------------------------------------------
@@ -579,7 +579,7 @@ class ExplicitSolver(Solver):
                 output_times.append(time)
 
             #rescale and apply bounds to timestep
-            if adaptive:
+            if adaptive and scale is not None:
                 if scale*dt < dt_min:
                     raise RuntimeError("Error control requires timestep smaller 'dt_min'!")
                 dt = np.clip(scale*dt, dt_min, dt_max)
@@ -843,7 +843,7 @@ class ImplicitSolver(Solver):
                 output_times.append(time)
 
             #rescale and apply bounds to timestep
-            if adaptive:
+            if adaptive and scale is not None:
                 if scale*dt < dt_min:
                     raise RuntimeError("Error control requires timestep smaller 'dt_min'!")
                 dt = np.clip(scale*dt, dt_min, dt_max)

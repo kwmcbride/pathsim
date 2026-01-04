@@ -229,7 +229,7 @@ class TestSpectrum(unittest.TestCase):
 
         self.assertTrue(success)
         self.assertEqual(error, 0.0)
-        self.assertEqual(scale, 1.0)
+        self.assertIsNone(scale)  # No rescale needed
         self.assertEqual(S.time, 0.0)
 
 
@@ -251,7 +251,8 @@ class TestSpectrum(unittest.TestCase):
         # Should return step results
         self.assertIsInstance(success, bool)
         self.assertIsInstance(error, float)
-        self.assertIsInstance(scale, float)
+        # scale is float when adaptive, None when no rescale needed
+        self.assertTrue(scale is None or isinstance(scale, float))
 
 
     def test_update(self):
@@ -496,7 +497,7 @@ class TestRealtimeSpectrum(unittest.TestCase):
         # Should return default values
         self.assertTrue(success)
         self.assertEqual(error, 0.0)
-        self.assertEqual(scale, 1.0)
+        self.assertIsNone(scale)  # No rescale needed
 
 
     @unittest.skip("Matplotlib/numpy compatibility issue in Python 3.13")

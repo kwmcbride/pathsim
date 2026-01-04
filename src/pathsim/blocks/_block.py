@@ -562,16 +562,16 @@ class Block:
             evaluation time
         dt : float
             integration timestep
-    
+
         Returns
-        ------- 
+        -------
         success : bool
             step was successful
         error : float
             local truncation error from adaptive integrators
-        scale : float
-            timestep rescale from adaptive integrators
+        scale : float | None
+            timestep rescale from adaptive integrators, None if no rescale needed
         """
 
         #by default no error estimate (error norm -> 0.0)
-        return True, 0.0, 1.0
+        return True, 0.0, None

@@ -75,11 +75,11 @@ class TestRKCK54(unittest.TestCase):
             if i < len(solver.eval_stages)-1:
                 self.assertTrue(success)
                 self.assertEqual(err, 0.0)
-                self.assertEqual(scale, 1.0)
+                self.assertIsNone(scale)  # No rescale needed at intermediate stages
 
         #test if expected return at final stage
         self.assertNotEqual(err, 0.0)
-        self.assertNotEqual(scale, 1.0)
+        self.assertIsNotNone(scale)  # Actual scale at final stage
 
 
     def test_integrate_fixed(self):

@@ -602,14 +602,16 @@ class Simulation:
     # event system helpers --------------------------------------------------------
 
     def _get_active_events(self):
-        """Helper method to collect all active events"""
-        events = []
+        """Generator that yields all active events from simulation
+        and internal block events.
+        """
         for event in self.events:
-            if event: events.append(event)
+            if event:
+                yield event
         for block in self._blocks_evt:
             for event in block.events:
-                if event: events.append(event)
-        return events
+                if event:
+                    yield event
 
 
     def _estimate_events(self, t):
@@ -1017,7 +1019,7 @@ class Simulation:
         """
 
         #initial timestep rescale and error estimate
-        success, max_error_norm, relevant_scales = True, 0.0, []
+        success, max_error_norm, min_scale = True, 0.0, None
 
         #step blocks and get error estimates if available
         for block in self._blocks_dyn:
@@ -1027,25 +1029,21 @@ class Simulation:
 
             #step the block
             suc, err_norm, scl = block.step(t, dt)
-            
+
             #check solver stepping success
-            if not suc: 
+            if not suc:
                 success = False
 
             #update error tracking
-            if err_norm > max_error_norm: 
+            if err_norm > max_error_norm:
                 max_error_norm = err_norm
-            
-            #update timestep rescale if relevant
-            if scl != 1.0 and scl > 0.0: 
-                relevant_scales.append(scl)
 
-        #no relevant timestep rescale -> quit early
-        if not relevant_scales: 
-            return success, max_error_norm, 1.0
+            #track minimum relevant scale directly (avoids list allocation)
+            if scl is not None:
+                if min_scale is None or scl < min_scale:
+                    min_scale = scl
 
-        #compute real timestep rescale
-        return success, max_error_norm, min(relevant_scales)
+        return success, max_error_norm, min_scale if min_scale is not None else 1.0
 
 
     # timestepping ----------------------------------------------------------------

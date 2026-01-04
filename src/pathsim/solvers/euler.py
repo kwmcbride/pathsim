@@ -83,7 +83,7 @@ class EUF(ExplicitSolver):
         self.x = x_0 + dt * f
 
         #no error estimate available
-        return True, 0.0, 1.0
+        return True, 0.0, None
 
 
 class EUB(ImplicitSolver):

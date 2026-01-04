@@ -224,8 +224,8 @@ class BDF(ImplicitSolver):
         if self._needs_startup:
             self.startup.step(f, dt)
             self.x = self.startup.get()
-            
-        return True, 0.0, 1.0
+
+        return True, 0.0, None
 
 
 # SOLVERS ==============================================================================

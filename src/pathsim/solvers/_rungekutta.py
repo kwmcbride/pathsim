@@ -154,8 +154,8 @@ class ExplicitRungeKutta(ExplicitSolver):
         self.x = x_0 + dt * slope
 
         #no error estimate or not last stage -> early exit
-        if self.TR is None or not self.is_last_stage(): 
-            return True, 0.0, 1.0
+        if self.TR is None or not self.is_last_stage():
+            return True, 0.0, None
 
         #compute truncation error estimate
         return self.error_controller(dt)
@@ -360,11 +360,11 @@ class DiagonallyImplicitRungeKutta(ImplicitSolver):
                 self.x = x_0 + dt * slope    
 
             #no error estimate -> early exit
-            if self.TR is None: 
-                return True, 0.0, 1.0
+            if self.TR is None:
+                return True, 0.0, None
 
             #compute truncation error estimate
             return self.error_controller(dt)
 
         #no error estimate otherwise
-        return True, 0.0, 1.0
+        return True, 0.0, None

@@ -188,8 +188,8 @@ class TestBlock(unittest.TestCase):
 
         B = Block()
 
-        #test default implementation
-        self.assertEqual(B.step(None, None), (True, 0.0, 1.0))
+        #test default implementation (scale=None means no rescale needed)
+        self.assertEqual(B.step(None, None), (True, 0.0, None))
 
 
     def test_info_base_block(self):
