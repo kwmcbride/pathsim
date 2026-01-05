@@ -31,6 +31,7 @@ from .optim.booster import ConnectionBooster
 
 from .utils.graph import Graph
 from .utils.analysis import Timer
+from .utils.deprecation import deprecated
 from .utils.portreference import PortReference
 from .utils.progresstracker import ProgressTracker
 from .utils.logger import LoggerManager
@@ -1048,9 +1049,9 @@ class Simulation:
 
     # timestepping ----------------------------------------------------------------
 
+    @deprecated(version="1.0.0", replacement="timestep")
     def timestep_fixed_explicit(self, dt=None):
-        """Advances the simulation by one timestep 'dt' for explicit
-        fixed step solvers.
+        """Advances the simulation by one timestep 'dt' for explicit fixed step solvers.
 
         .. deprecated::
             Use :meth:`timestep` instead.
@@ -1073,15 +1074,12 @@ class Simulation:
         total_solver_its : int
             total number of implicit solver iterations
         """
-        self.logger.warning(
-            "'timestep_fixed_explicit' is deprecated, use 'timestep' instead"
-            )
         return self.timestep(dt, adaptive=False)
 
 
+    @deprecated(version="1.0.0", replacement="timestep")
     def timestep_fixed_implicit(self, dt=None):
-        """Advances the simulation by one timestep 'dt' for implicit
-        fixed step solvers.
+        """Advances the simulation by one timestep 'dt' for implicit fixed step solvers.
 
         .. deprecated::
             Use :meth:`timestep` instead.
@@ -1104,15 +1102,12 @@ class Simulation:
         total_solver_its : int
             total number of implicit solver iterations
         """
-        self.logger.warning(
-            "'timestep_fixed_implicit' is deprecated, use 'timestep' instead"
-            )
         return self.timestep(dt, adaptive=False)
 
 
+    @deprecated(version="1.0.0", replacement="timestep")
     def timestep_adaptive_explicit(self, dt=None):
-        """Advances the simulation by one timestep 'dt' for explicit
-        adaptive solvers.
+        """Advances the simulation by one timestep 'dt' for explicit adaptive solvers.
 
         .. deprecated::
             Use :meth:`timestep` instead.
@@ -1135,15 +1130,12 @@ class Simulation:
         total_solver_its : int
             total number of implicit solver iterations
         """
-        self.logger.warning(
-            "'timestep_adaptive_explicit' is deprecated, use 'timestep' instead"
-            )
         return self.timestep(dt, adaptive=True)
 
 
+    @deprecated(version="1.0.0", replacement="timestep")
     def timestep_adaptive_implicit(self, dt=None):
-        """Advances the simulation by one timestep 'dt' for implicit
-        adaptive solvers.
+        """Advances the simulation by one timestep 'dt' for implicit adaptive solvers.
 
         .. deprecated::
             Use :meth:`timestep` instead.
@@ -1166,9 +1158,6 @@ class Simulation:
         total_solver_its : int
             total number of implicit solver iterations
         """
-        self.logger.warning(
-            "'timestep_adaptive_implicit' is deprecated, use 'timestep' instead"
-            )
         return self.timestep(dt, adaptive=True)
 
 
@@ -1468,7 +1457,7 @@ class Simulation:
         return tracker.stats
 
 
-    def run_streaming(self, duration=10, reset=False, adaptive=True, tickrate=30):
+    def run_streaming(self, duration=10, reset=False, adaptive=True, tickrate=10, func_callback=None):
         """Perform simulation with streaming output at a fixed wall-clock rate.
 
         This method runs the simulation as fast as possible while yielding
@@ -1487,15 +1476,15 @@ class Simulation:
             use adaptive timesteps if solver is adaptive (default True)
         tickrate : float
             output rate in Hz, i.e., yields per second of wall-clock time
-            (default 30)
+            (default 10)
+        func_callback : callable | None
+            callback function that is called at every tick, can be used 
+            for data extraction, its return value is yielded by this generator
 
         Yields
         ------
-        result : dict
-            dictionary containing:
-            - 'progress' : float, simulation progress from 0.0 to 1.0
-            - 'sim_time' : float, current simulation time
-            - 'data' : dict, collected data from recording blocks
+        result 
+            The return value of the 'func_callback' callable. 
         """
 
         #initialize progress tracker
@@ -1522,21 +1511,13 @@ class Simulation:
                     last_tick = now
 
                     #yield intermediate results
-                    yield {
-                        'progress': step['progress'],
-                        'sim_time': self.time,
-                        'data': self.collect()
-                        }
+                    yield func_callback() if callable(func_callback) else None
 
             #final yield with complete results
-            yield {
-                'progress': 1.0,
-                'sim_time': self.time,
-                'data': self.collect()
-                }
+            yield func_callback() if callable(func_callback) else None
 
 
-    def run_realtime(self, duration=10, reset=False, adaptive=True, tickrate=30, speed=1.0):
+    def run_realtime(self, duration=10, reset=False, adaptive=True, tickrate=30, speed=1.0, func_callback=None):
         """Perform simulation paced to wall-clock time.
 
         This method runs the simulation synchronized to real time, optionally
@@ -1562,15 +1543,14 @@ class Simulation:
         speed : float
             time scaling factor where 1.0 is real-time, 2.0 is twice as fast,
             0.5 is half speed (default 1.0)
+        func_callback : callable | None
+            callback function that is called at every tick, can be used 
+            for data extraction, its return value is yielded by this generator
 
         Yields
         ------
-        result : dict
-            dictionary containing:
-            - 'progress' : float, simulation progress from 0.0 to 1.0
-            - 'sim_time' : float, current simulation time
-            - 'wall_time' : float, elapsed wall-clock time in seconds
-            - 'data' : dict, collected data from recording blocks
+        result 
+            The return value of the 'func_callback' callable. 
         """
 
         #initialize progress tracker
@@ -1616,20 +1596,10 @@ class Simulation:
                     progress = (self.time - start_sim) / duration
 
                     #yield intermediate results
-                    yield {
-                        'progress': min(progress, 1.0),
-                        'sim_time': self.time,
-                        'wall_time': wall_elapsed,
-                        'data': self.collect()
-                        }
+                    yield func_callback() if callable(func_callback) else None
 
                 #small sleep to avoid busy-waiting
                 time.sleep(0.001)
 
             #final yield with complete results
-            yield {
-                'progress': 1.0,
-                'sim_time': self.time,
-                'wall_time': time.perf_counter() - start_wall,
-                'data': self.collect()
-                }
+            yield func_callback() if callable(func_callback) else None
