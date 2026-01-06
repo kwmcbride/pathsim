@@ -48,11 +48,15 @@ class Scope(Block):
     ----------
     recording : dict
         recording, where key is time, and value the recorded values
+    _incremental_idx : int
+        index for incremental reading of accumulated data since last 
+        call of incremental read
     _sample_next_timestep : bool
-        flag to indicate this is a timestep to sample, only used for event based sampling 
-        when `sampling_rate` is provided as an arg
+        flag to indicate this is a timestep to sample, only used for 
+        event based sampling when `sampling_rate` is provided as an arg
     events : list[Schedule]
-        internal scheduled event for periodic input sampling when `sampling_rate` is provided
+        internal scheduled event for periodic input sampling when 
+        `sampling_rate` is provided
     """
     
     def __init__(self, sampling_rate=None, t_wait=0.0, labels=None):
@@ -69,6 +73,9 @@ class Scope(Block):
 
         #set recording data and time
         self.recording = {}
+
+        #initial index for incremental reading
+        self._incremental_idx = 0
 
         #sampling produces discrete time behavior
         if not (sampling_rate is None):
@@ -99,10 +106,19 @@ class Scope(Block):
         #reset recording data and time
         self.recording = {}
 
+        #reset index for incremental read
+        self._incremental_idx = 0
 
-    def read(self):
-        """Return the recorded time domain data and the 
-        corresponding time for all input ports
+
+    def read(self, incremental=False):
+        """Return the recorded time domain data and the corresponding 
+        time for all input ports
+    
+        Parameters
+        ----------
+        incremental : bool
+            read the data incrementally, only return new data 
+            that has accumulated after the last incremental read call
 
         Returns
         -------
@@ -113,11 +129,24 @@ class Scope(Block):
         """
 
         #just return 'None' if no recording available
-        if not self.recording: return None, None
+        if not self.recording: 
+            return None, None
 
         #reformat the data from the recording dict
         time = np.array(list(self.recording.keys()))
         data = np.array(list(self.recording.values())).T
+            
+        #return accumulated data since last incremental call
+        if incremental:
+            
+            _idx, self._incremental_idx = self._incremental_idx, len(self.recording)
+            
+            #no data accumulated -> exit same as empty recording
+            if _idx == self._incremental_idx:
+                return None, None
+
+            return time[_idx:], data[_idx:]
+
         return time, data
 
 
