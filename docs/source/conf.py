@@ -37,7 +37,7 @@ extensions = [
 html_theme = 'furo'
 html_static_path = ['_static']
 html_logo = 'logos/pathsim_logo.png'
-html_favicon = "logos/pathsim_simplistic_logo.png"
+html_favicon = "logos/pathsim_icon.png"
 html_title = "PathSim Documentation"
 html_css_files = ['custom.css']  # Add custom CSS for link previews and styling
 
