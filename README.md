@@ -8,7 +8,6 @@
 
 
 # PathSim - A System Simulation Framework
-[![PySimHub](https://pysimhub.io/badge.svg)](https://pysimhub.io/projects/pathsim)
 [![DOI](https://joss.theoj.org/papers/10.21105/joss.08158/status.svg)](https://doi.org/10.21105/joss.08158)
 ![GitHub License](https://img.shields.io/github/license/pathsim/pathsim)
 ![GitHub Release](https://img.shields.io/github/v/release/pathsim/pathsim)
