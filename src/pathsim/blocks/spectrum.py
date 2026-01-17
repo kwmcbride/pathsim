@@ -98,6 +98,9 @@ class Spectrum(Block):
         labels for the inputs
     """
 
+    input_port_labels = None
+    output_port_labels = {}
+
     def __init__(self, freq=[], t_wait=0.0, alpha=0.0, labels=[]):
         super().__init__()
         
