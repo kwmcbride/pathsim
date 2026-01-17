@@ -300,9 +300,9 @@ class SinusoidalPhaseNoiseSource(Block):
         y(t) = A \\sin\\left(\\omega t + \\varphi_0 + \\sigma_w n_w(t) + \\sigma_c \\int_0^t n_c(\\tau) d\\tau\\right)
     
     where :math:`A` is amplitude, :math:`\\omega = 2\\pi f` is angular frequency,
-    :math:`\\varphi_0` is initial phase, :math:`\\sigma_w` and :math:`\\sigma_c` are 
-    the white and cumulative noise weights, and :math:`n_w(t)` and :math:`n_c(t)` are 
-    independent standard normal random processes sampled at the specified sampling rate.
+    :math:`\\varphi_0` is initial phase, :math:`\\sigma_w` and :math:`\\sigma_c` are
+    the white and cumulative noise weights, and :math:`n_w(t)` and :math:`n_c(t)` are
+    independent standard normal random processes sampled at the specified sampling period.
     
     Parameters
     ----------
@@ -316,10 +316,10 @@ class SinusoidalPhaseNoiseSource(Block):
         weight for cumulative phase noise contribution
     sig_white : float
         weight for white phase noise contribution
-    sampling_rate : float, None
-        frequency with which the phase noise is sampled (Hz). If None,
-        noise is sampled every timestep (default is 10 Hz)
-    
+    sampling_period : float, None
+        time between phase noise samples. If None,
+        noise is sampled every timestep (default is 0.1)
+
     Attributes
     ----------
     omega : float
@@ -329,20 +329,20 @@ class SinusoidalPhaseNoiseSource(Block):
     noise_2 : float
         internal noise value for cumulative phase noise
     events : list[Schedule]
-        scheduled event for periodic sampling (only if sampling_rate is set)
+        scheduled event for periodic sampling (only if sampling_period is set)
     """
 
     input_port_labels = {}
     output_port_labels = {"out":0}
 
     def __init__(
-        self, 
-        frequency=1, 
-        amplitude=1, 
-        phase=0, 
-        sig_cum=0, 
-        sig_white=0, 
-        sampling_rate=10
+        self,
+        frequency=1,
+        amplitude=1,
+        phase=0,
+        sig_cum=0,
+        sig_white=0,
+        sampling_period=0.1
         ):
         super().__init__()
 
@@ -350,7 +350,7 @@ class SinusoidalPhaseNoiseSource(Block):
         self.amplitude = amplitude
         self.frequency = frequency
         self.phase = phase
-        self.sampling_rate = sampling_rate
+        self.sampling_period = sampling_period
 
         self.omega = 2 * np.pi * self.frequency
 
@@ -366,7 +366,7 @@ class SinusoidalPhaseNoiseSource(Block):
         self.initial_value = 0.0
 
         #sampling produces discrete time behavior for noise
-        if sampling_rate is None:
+        if sampling_period is None:
             pass  # sample every timestep
         else:
             #internal scheduled event for noise sampling
@@ -377,7 +377,7 @@ class SinusoidalPhaseNoiseSource(Block):
             self.events = [
                 Schedule(
                     t_start=0,
-                    t_period=1/sampling_rate,
+                    t_period=sampling_period,
                     func_act=_sample_noise
                 )
             ]
@@ -414,9 +414,9 @@ class SinusoidalPhaseNoiseSource(Block):
 
     def sample(self, t, dt):
         """Sample from a normal distribution after successful timestep.
-        
-        Only used when sampling_rate is None (continuous sampling).
-        
+
+        Only used when sampling_period is None (continuous sampling).
+
         Parameters
         ----------
         t : float
@@ -424,8 +424,8 @@ class SinusoidalPhaseNoiseSource(Block):
         dt : float
             integration timestep
         """
-        if self.sampling_rate is None:
-            self.noise_1 = np.random.normal() 
+        if self.sampling_period is None:
+            self.noise_1 = np.random.normal()
             self.noise_2 = np.random.normal()
 
 
@@ -516,10 +516,10 @@ class ChirpPhaseNoiseSource(Block):
         weight for cumulative phase noise contribution
     sig_white : float
         weight for white phase noise contribution
-    sampling_rate : float, None
-        frequency with which phase noise is sampled (Hz). If None,
-        noise is sampled every timestep (default is 10 Hz)
-        
+    sampling_period : float, None
+        time between phase noise samples. If None,
+        noise is sampled every timestep (default is 0.1)
+
     Attributes
     ----------
     noise_1 : float
@@ -527,22 +527,22 @@ class ChirpPhaseNoiseSource(Block):
     noise_2 : float
         internal noise value for cumulative phase noise
     events : list[Schedule]
-        scheduled event for periodic sampling (only if sampling_rate is set)
+        scheduled event for periodic sampling (only if sampling_period is set)
     """
 
     input_port_labels = {}
     output_port_labels = {"out":0}
 
     def __init__(
-        self, 
-        amplitude=1, 
-        f0=1, 
-        BW=1, 
-        T=1, 
-        phase=0, 
-        sig_cum=0, 
-        sig_white=0, 
-        sampling_rate=10
+        self,
+        amplitude=1,
+        f0=1,
+        BW=1,
+        T=1,
+        phase=0,
+        sig_cum=0,
+        sig_white=0,
+        sampling_period=0.1
         ):
         super().__init__()
 
@@ -556,7 +556,7 @@ class ChirpPhaseNoiseSource(Block):
         #parameters for phase noise
         self.sig_cum = sig_cum
         self.sig_white = sig_white
-        self.sampling_rate = sampling_rate
+        self.sampling_period = sampling_period
 
         #initial noise sampling
         self.noise_1 = np.random.normal()
@@ -566,7 +566,7 @@ class ChirpPhaseNoiseSource(Block):
         self.initial_value = 0.0
 
         #sampling produces discrete time behavior for noise
-        if sampling_rate is None:
+        if sampling_period is None:
             pass  # sample every timestep
         else:
             #internal scheduled event for noise sampling
@@ -577,7 +577,7 @@ class ChirpPhaseNoiseSource(Block):
             self.events = [
                 Schedule(
                     t_start=0,
-                    t_period=1/sampling_rate,
+                    t_period=sampling_period,
                     func_act=_sample_noise
                 )
             ]
@@ -615,11 +615,11 @@ class ChirpPhaseNoiseSource(Block):
 
 
     def sample(self, t, dt):
-        """Sample from a normal distribution after successful timestep 
+        """Sample from a normal distribution after successful timestep
         to update internal noise samples.
-        
-        Only used when sampling_rate is None (continuous sampling).
-        
+
+        Only used when sampling_period is None (continuous sampling).
+
         Parameters
         ----------
         t : float
@@ -627,8 +627,8 @@ class ChirpPhaseNoiseSource(Block):
         dt : float
             integration timestep
         """
-        if self.sampling_rate is None:
-            self.noise_1 = np.random.normal() 
+        if self.sampling_period is None:
+            self.noise_1 = np.random.normal()
             self.noise_2 = np.random.normal()
 
 
