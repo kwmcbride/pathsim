@@ -59,6 +59,9 @@ class ADC(Block):
         Internal scheduled event responsible for periodic sampling and conversion.
     """
 
+    input_port_labels = {"in": 0}
+    output_port_labels = None
+
     def __init__(self, n_bits=4, span=[-1, 1], T=1, tau=0):
         super().__init__()
 
@@ -68,12 +71,11 @@ class ADC(Block):
         self.T = T
         self.tau = tau
 
-        #port alias map
-        _port_map_out = {f"b{self.n_bits-n}":n for n in range(self.n_bits)}
+        #override output ports
+        self.output_port_labels = {f"b{self.n_bits-n}":n for n in range(self.n_bits)}
 
         #block io with port labels
-        self.inputs = Register(mapping={"in": 0})
-        self.outputs = Register(size=self.n_bits, mapping=_port_map_out)
+        self.outputs = Register(size=self.n_bits, mapping=output_port_labels)
 
         def _sample(t):
 
