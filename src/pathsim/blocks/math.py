@@ -454,8 +454,8 @@ class Norm(Math):
 
         #create internal algebraic operator
         self.op_alg = Operator(
-            func=np.linalg.norm, 
-            jac=lambda x: x/np.linalg.norm(x)
+            func=np.linalg.norm,
+            jac=lambda x: (x/np.linalg.norm(x)).reshape(1, -1)
             )
 
 
@@ -572,6 +572,6 @@ class Matrix(Math):
         self.A = A
 
         self.op_alg = Operator(
-            func=lambda u: np.dot(self.A, u), 
-            jac=lambda u: np.dot(self.A, u)
+            func=lambda u: np.dot(self.A, u),
+            jac=lambda u: self.A
             )

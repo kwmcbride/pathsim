@@ -72,7 +72,7 @@ def crt(r, phi):
 
 # Scope for visualization
 sc1 = Scope(labels=["r [m]", "vr [m/s]", "phi [rad]", "omega [rad/s]"])
-sc2 = Scope(labels=["x [m]", "y [m]"], sampling_rate=0.005)
+sc2 = Scope(labels=["x [m]", "y [m]"], sampling_period=0.005)
 
 blocks = [rad, ang, crt, sc1, sc2]
 
