@@ -20,36 +20,36 @@ from ..events.schedule import Schedule
 class RandomNumberGenerator(Block):
     """Generates a random output value using `numpy.random.rand`.
 
-    If no `sampling_rate` (None) is specified, every simulation timestep gets 
-    a random value. Otherwise an internal `Schedule` event is used to periodically 
-    sample a random value and set the output like a sero-order-hold stage.
+    If no `sampling_period` (None) is specified, every simulation timestep gets
+    a random value. Otherwise an internal `Schedule` event is used to periodically
+    sample a random value and set the output like a zero-order-hold stage.
 
     Parameters
     ----------
-    sampling_rate : float, None
-        number of random samples per time unit
+    sampling_period : float, None
+        time between random samples
 
     Attributes
     ----------
     _sample : float
-        internal random number state in case that 
-        no `samplingrate` is provided
+        internal random number state in case that
+        no `sampling_period` is provided
     Evt : Schedule
-        internal event that periodically samples a random 
-        value in case `samplingrate` is provided
+        internal event that periodically samples a random
+        value in case `sampling_period` is provided
     """
 
     input_port_labels = {}
     output_port_labels = {"out":0}
 
-    def __init__(self, sampling_rate=None):
+    def __init__(self, sampling_period=None):
         super().__init__()
 
         #block parameter
-        self.sampling_rate = sampling_rate 
+        self.sampling_period = sampling_period 
 
         #sampling produces discrete time behavior
-        if sampling_rate is None:
+        if sampling_period is None:
 
             #initial sample for non-discrete block
             self._sample = np.random.rand()
@@ -62,28 +62,28 @@ class RandomNumberGenerator(Block):
 
             self.Evt = Schedule(
                 t_start=0,
-                t_period=sampling_rate,
+                t_period=sampling_period,
                 func_act=_set
                 )
             self.events = [self.Evt]
 
 
     def update(self, t):
-        """Setting output with random sample in case 
-        of `samplingrate==None`, otherwise does nothing.
+        """Setting output with random sample in case
+        of `sampling_period==None`, otherwise does nothing.
 
         Parameters
         ----------
         t : float
             evaluation time
         """
-        if self.sampling_rate is None:
+        if self.sampling_period is None:
             self.outputs[0] = self._sample
 
 
     def sample(self, t, dt):
-        """Generating a new random sample at each timestep 
-        in case of `samplingrate==None`, otherwise does nothing.
+        """Generating a new random sample at each timestep
+        in case of `sampling_period==None`, otherwise does nothing.
 
         Parameters
         ----------
@@ -92,7 +92,7 @@ class RandomNumberGenerator(Block):
         dt : float
             integration timestep
         """
-        if self.sampling_rate is None:
+        if self.sampling_period is None:
             self._sample = np.random.rand()
 
 
