@@ -18,10 +18,10 @@ from pathsim.blocks import Scope, Spectrum, SinusoidalPhaseNoiseSource
 f = 2
 dt = 0.01
 
-sr1 = SinusoidalPhaseNoiseSource(frequency=f, sig_cum=0, sig_white=0, sampling_rate=20)
-sr2 = SinusoidalPhaseNoiseSource(frequency=f, sig_cum=0, sig_white=0.1, sampling_rate=20)
-sr3 = SinusoidalPhaseNoiseSource(frequency=f, sig_cum=0.5, sig_white=0, sampling_rate=20)
-sr4 = SinusoidalPhaseNoiseSource(frequency=f, sig_cum=0.5, sig_white=0.1, sampling_rate=20)
+sr1 = SinusoidalPhaseNoiseSource(frequency=f, sig_cum=0, sig_white=0, sampling_period=0.05)
+sr2 = SinusoidalPhaseNoiseSource(frequency=f, sig_cum=0, sig_white=0.1, sampling_period=0.05)
+sr3 = SinusoidalPhaseNoiseSource(frequency=f, sig_cum=0.5, sig_white=0, sampling_period=0.05)
+sr4 = SinusoidalPhaseNoiseSource(frequency=f, sig_cum=0.5, sig_white=0.1, sampling_period=0.05)
 
 sco = Scope(labels=["signal", "white", "integral", "both"])
 spc = Spectrum(freq=np.linspace(0.5*f,1.5*f, 501), 
