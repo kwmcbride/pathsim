@@ -454,8 +454,8 @@ class Norm(Math):
 
         #create internal algebraic operator
         self.op_alg = Operator(
-            func=np.linalg.norm, 
-            jac=lambda x: x/np.linalg.norm(x)
+            func=np.linalg.norm,
+            jac=lambda x: (x/np.linalg.norm(x)).reshape(1, -1)
             )
 
 
