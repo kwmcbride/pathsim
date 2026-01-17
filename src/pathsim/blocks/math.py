@@ -572,6 +572,6 @@ class Matrix(Math):
         self.A = A
 
         self.op_alg = Operator(
-            func=lambda u: np.dot(self.A, u), 
-            jac=lambda u: np.dot(self.A, u)
+            func=lambda u: np.dot(self.A, u),
+            jac=lambda u: self.A
             )
