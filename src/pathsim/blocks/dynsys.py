@@ -24,10 +24,10 @@ class DynamicalSystem(Block):
 
     .. math::
 
-        \\begin{eqnarray}
-            \\dot{x}(t) =& \\mathrm{func}_\\mathrm{dyn}(x(t), u(t), t) \\\\
-                   y(t) =& \\mathrm{func}_\\mathrm{alg}(x(t), u(t), t)
-        \\end{eqnarray}
+        \\begin{align}
+            \\dot{x}(t) &= \\mathrm{func}_\\mathrm{dyn}(x(t), u(t), t) \\\\
+                   y(t) &= \\mathrm{func}_\\mathrm{alg}(x(t), u(t), t)
+        \\end{align}
 
         
     Parameters

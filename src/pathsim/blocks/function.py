@@ -64,7 +64,7 @@ class Function(Block):
         fn = Function(f)
         
 
-    then, when the block is uldated, the input channels of the block are 
+    then, when the block is updated, the input channels of the block are 
     assigned to the function arguments following this scheme:
 
     .. code-block::

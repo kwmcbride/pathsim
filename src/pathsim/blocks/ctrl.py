@@ -195,10 +195,10 @@ class AntiWindupPID(PID):
 
     .. math::
     
-        \\begin{eqnarray}    
-        \\dot{x}_1 =& f_\\mathrm{max} (u - x_1) \\\\
-        \\dot{x}_2 =& u - w \\\\
-        \\end{eqnarray}
+        \\begin{align}
+        \\dot{x}_1 &= f_\\mathrm{max} (u - x_1) \\\\
+        \\dot{x}_2 &= u - w
+        \\end{align}
     
     with the anti-windup feedback (depending on the pid output)
 

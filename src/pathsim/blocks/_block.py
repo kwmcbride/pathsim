@@ -21,9 +21,9 @@ from ..utils.portreference import PortReference
 # BASE BLOCK CLASS ======================================================================
 
 class Block:
-    """Base 'Block' object that defines the inputs, outputs and the connect method.
+    """Base 'Block' object that defines the inputs, outputs and the block interface.
 
-    Block interconnections are handeled via the io interface of the blocks. 
+    Block interconnections are handled via the io interface of the blocks. 
     It is realized by dicts for the 'inputs' and for the 'outputs', where the 
     key of the dict is the input/output channel and the corresponding value is 
     the input/output value. 
@@ -35,10 +35,10 @@ class Block:
 
     .. math::
     
-        \\begin{eqnarray}
+        \\begin{align}
         \\dot{x} &= f_\\mathrm{dyn}(x, u, t)\\\\
                y &= f_\\mathrm{alg}(x, u, t)
-        \\end{eqnarray}
+        \\end{align}
 
 
     they are algebraic operators for the algebraic path of the block and for the 
@@ -108,7 +108,7 @@ class Block:
         """The '__len__' method of the block is used to compute the length of the 
         algebraic path of the block. 
 
-        For instant time blocks or blocks with purely algenbraic components 
+        For instant time blocks or blocks with purely algebraic components 
         (adders, amplifiers, etc.) it returns 1, otherwise (integrator, delay, etc.) 
         it returns 0.
 
@@ -323,7 +323,7 @@ class Block:
         This is done by linearizing the internal 'Operator' and 'DynamicOperator' 
         instances in the current system operating point. The operators create 
         1st order taylor approximations internally and use them on subsequent 
-        calls after linarization.
+        calls after linearization.
 
         Parameters
         ----------
@@ -418,7 +418,7 @@ class Block:
     def sample(self, t, dt):
         """Samples the data of the blocks inputs or internal state when called. 
 
-        This can record block parameters after a succesful timestep such as 
+        This can record block parameters after a successful timestep such as 
         for the 'Scope' and 'Delay' blocks but also for sampling from a random 
         distribution in the 'RNG' and the noise blocks.
         
