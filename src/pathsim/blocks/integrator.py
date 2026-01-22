@@ -30,10 +30,10 @@ class Integrator(Block):
     or in differential form like this:
 
     .. math::
-        \\begin{eqnarray}
+        \\begin{align}
             \\dot{x}(t) &= u(t) \\\\
-                   y(t) &= x(t) 
-        \\end{eqnarray}
+                   y(t) &= x(t)
+        \\end{align}
 
     The Integrator block is inherently MIMO capable, so `u` 
     and `y` can be vectors.

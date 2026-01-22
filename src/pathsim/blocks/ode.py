@@ -23,10 +23,10 @@ class ODE(Block):
 
     .. math::
 
-        \\begin{eqnarray}
-            \\dot{x}(t) =& \\mathrm{func}(x(t), u(t), t) \\\\
-                   y(t) =& x(t) 
-        \\end{eqnarray}
+        \\begin{align}
+            \\dot{x}(t) &= \\mathrm{func}(x(t), u(t), t) \\\\
+                   y(t) &= x(t)
+        \\end{align}
 
     with inhomogenity (input) `u` and state vector `x`. The function can be nonlinear 
     and the ODE can be of arbitrary order. The block utilizes the integration engine 

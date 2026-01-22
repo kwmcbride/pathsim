@@ -31,10 +31,10 @@ class StateSpace(Block):
 
     .. math::
 
-        \\begin{eqnarray}
+        \\begin{align}
             \\dot{x} &= \\mathbf{A} x + \\mathbf{B} u \\\\
-                   y &= \\mathbf{C} x + \\mathbf{D} u 
-        \\end{eqnarray}
+                   y &= \\mathbf{C} x + \\mathbf{D} u
+        \\end{align}
 
     where `A`, `B`, `C` and `D` are the state space matrices, `x` is the state, 
     `u` the input and `y` the output vector.
@@ -190,10 +190,10 @@ class TransferFunctionPRC(StateSpace):
 
     .. math::
         
-        \\begin{eqnarray}
+        \\begin{align}
             \\dot{x} &= \\mathbf{A} x + \\mathbf{B} u \\\\
-                   y &= \\mathbf{C} x + \\mathbf{D} u 
-        \\end{eqnarray}
+                   y &= \\mathbf{C} x + \\mathbf{D} u
+        \\end{align}
 
     is handled the same as the 'StateSpace' block, where `A`, `B`, `C` and `D` 
     are the state space matrices, `x` is the internal state, `u` the input and 
@@ -247,10 +247,10 @@ class TransferFunctionZPG(StateSpace):
 
     .. math::
         
-        \\begin{eqnarray}
+        \\begin{align}
             \\dot{x} &= \\mathbf{A} x + \\mathbf{B} u \\\\
-                   y &= \\mathbf{C} x + \\mathbf{D} u 
-        \\end{eqnarray}
+                   y &= \\mathbf{C} x + \\mathbf{D} u
+        \\end{align}
 
     is handled the same as the 'StateSpace' block, where `A`, `B`, `C` and `D` 
     are the state space matrices, `x` is the internal state, `u` the input and 
@@ -300,10 +300,10 @@ class TransferFunctionNumDen(StateSpace):
 
     .. math::
         
-        \\begin{eqnarray}
+        \\begin{align}
             \\dot{x} &= \\mathbf{A} x + \\mathbf{B} u \\\\
-                   y &= \\mathbf{C} x + \\mathbf{D} u 
-        \\end{eqnarray}
+                   y &= \\mathbf{C} x + \\mathbf{D} u
+        \\end{align}
 
     is handled the same as the 'StateSpace' block, where `A`, `B`, `C` and `D` 
     are the state space matrices, `x` is the internal state, `u` the input and 
