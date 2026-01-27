@@ -19,11 +19,13 @@ class RK4(ExplicitRungeKutta):
 
     .. math::
 
+        \\begin{aligned}
         k_1 &= f(x_n,\\; t_n) \\\\
         k_2 &= f\\!\\left(x_n + \\tfrac{h}{2}\\,k_1,\\; t_n + \\tfrac{h}{2}\\right) \\\\
         k_3 &= f\\!\\left(x_n + \\tfrac{h}{2}\\,k_2,\\; t_n + \\tfrac{h}{2}\\right) \\\\
         k_4 &= f(x_n + h\\,k_3,\\; t_n + h) \\\\
         x_{n+1} &= x_n + \\tfrac{h}{6}(k_1 + 2k_2 + 2k_3 + k_4)
+        \\end{aligned}
 
     Characteristics
     ---------------
