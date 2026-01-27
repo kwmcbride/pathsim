@@ -16,24 +16,27 @@ from ._rungekutta import DiagonallyImplicitRungeKutta
 
 class ESDIRK32(DiagonallyImplicitRungeKutta):
     """Four-stage, 3rd order ESDIRK method with embedded 2nd order error
-    estimate. A-stable.
+    estimate. L-stable and stiffly accurate.
 
     Characteristics
     ---------------
     * Order: 3 (propagating) / 2 (embedded)
     * Stages: 4 (1 explicit, 3 implicit)
     * Adaptive timestep
-    * A-stable
+    * L-stable, stiffly accurate
+    * Stage order 2 (:math:`\\gamma = 1/2`)
 
     Note
     ----
-    The cheapest adaptive implicit Runge-Kutta solver in this library.
-    Three implicit stages per step keeps the cost low while A-stability
-    handles moderately stiff block diagrams. For lower per-step cost,
-    the ``GEAR`` multistep solvers require only one implicit solve per
-    step. Also used internally as the startup method for ``GEAR``
-    solvers. When higher accuracy or L-stability is needed, step up to
-    ``ESDIRK43``.
+    The cheapest adaptive implicit Runge-Kutta solver in this library,
+    yet remarkably robust.  L-stability and stiff accuracy guarantee that
+    high-frequency parasitic modes are fully damped regardless of
+    timestep, and the optimal stage order of 2 (from :math:`\\gamma = 1/2`)
+    minimises order reduction on stiff problems.  Three implicit stages
+    per step keeps the cost well below ``ESDIRK43`` while still providing
+    adaptive step-size control.  For even lower per-step cost the
+    ``GEAR`` multistep solvers require only one implicit solve per step.
+    Also used internally as the startup method for ``GEAR`` solvers.
 
     References
     ----------
