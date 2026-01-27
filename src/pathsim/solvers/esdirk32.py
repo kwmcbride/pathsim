@@ -27,11 +27,13 @@ class ESDIRK32(DiagonallyImplicitRungeKutta):
 
     Note
     ----
-    The cheapest adaptive implicit solver in this library. Three implicit
-    stages per step keeps the cost low while A-stability handles moderately
-    stiff block diagrams. Also used internally as the startup method for
-    ``GEAR`` solvers. When higher accuracy or L-stability is needed, step up
-    to ``ESDIRK43``.
+    The cheapest adaptive implicit Runge-Kutta solver in this library.
+    Three implicit stages per step keeps the cost low while A-stability
+    handles moderately stiff block diagrams. For lower per-step cost,
+    the ``GEAR`` multistep solvers require only one implicit solve per
+    step. Also used internally as the startup method for ``GEAR``
+    solvers. When higher accuracy or L-stability is needed, step up to
+    ``ESDIRK43``.
 
     References
     ----------
