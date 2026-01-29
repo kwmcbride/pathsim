@@ -6,6 +6,16 @@ PathSim
 
 .. raw:: html
 
+   <div style="background: #0070c0; border-radius: 8px; padding: 1rem 1.5rem; margin-bottom: 2rem; color: white;">
+      <p style="margin: 0 0 0.5rem 0; font-weight: 600; font-size: 1.1rem;">
+         📢 We've moved to a new documentation site!
+      </p>
+      <p style="margin: 0; opacity: 0.95;">
+         This legacy documentation will remain available but is no longer updated.
+         Visit <a href="https://docs.pathsim.org" style="color: white; font-weight: 600;">docs.pathsim.org</a> for the latest docs with interactive examples, and <a href="https://pathsim.org" style="color: white; font-weight: 600;">pathsim.org</a> for the new homepage.
+      </p>
+   </div>
+
    <div style="text-align: center; margin-bottom: 2rem;">
       <p style="font-size: 1.3rem; color: var(--color-foreground-secondary); max-width: 800px; margin: 0 auto;">
          A scalable block-based time-domain system simulation framework in Python with hierarchical modeling and event handling!
