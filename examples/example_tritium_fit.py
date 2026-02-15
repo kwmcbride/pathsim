@@ -190,6 +190,7 @@ if __name__ == '__main__':
 
     # Parameter estimation imports
     from pathsim.opt import ParameterEstimator, TimeSeriesData
+    from scipy.special import exp10
 
     # Run simulation
     sim.run(duration=7*24*3600)
@@ -212,8 +213,8 @@ if __name__ == '__main__':
     )
 
     # DAdd block parameters to estimate
-    est.add_block_parameter(k_wall, 'value', id='k_wall')
-    est.add_block_parameter(k_top, 'value', id='k_top')
+    est.add_block_parameter(k_wall, 'value', id='k_wall', transform=exp10, value=0.2, bounds=(-1, 1))
+    est.add_block_parameter(k_top, 'value', id='k_top', transform=exp10, value=0.3, bounds=(-1, 1))
 
     print(est.parameters)
 
