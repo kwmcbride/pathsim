@@ -16,7 +16,9 @@ from pathsim.blocks.ctrl import (
     LeadLag,
     PID,
     AntiWindupPID,
-    RateLimiter
+    RateLimiter,
+    Backlash,
+    Deadband
     )
 
 #base solver for testing
@@ -323,6 +325,107 @@ class TestRateLimiter(unittest.TestCase):
         #output should be engine state (initially 0)
         rl.update(0)
         self.assertAlmostEqual(rl.outputs[0], 0.0)
+
+
+class TestBacklash(unittest.TestCase):
+    """Test the implementation of the 'Backlash' block class"""
+
+    def test_init(self):
+
+        bl = Backlash(width=0.5, f_max=1e3)
+
+        self.assertEqual(bl.width, 0.5)
+        self.assertEqual(bl.f_max, 1e3)
+
+
+    def test_len(self):
+
+        #no direct passthrough
+        bl = Backlash()
+        self.assertEqual(len(bl), 0)
+
+
+    def test_shape(self):
+
+        bl = Backlash()
+        self.assertEqual(bl.shape, (1, 1))
+
+
+    def test_set_solver(self):
+
+        bl = Backlash(width=1.0)
+        bl.set_solver(Solver, None)
+        self.assertTrue(isinstance(bl.engine, Solver))
+
+
+    def test_update(self):
+
+        bl = Backlash(width=1.0)
+        bl.set_solver(Solver, None)
+
+        #output should be engine state (initially 0)
+        bl.update(0)
+        self.assertAlmostEqual(bl.outputs[0], 0.0)
+
+
+class TestDeadband(unittest.TestCase):
+    """Test the implementation of the 'Deadband' block class"""
+
+    def test_init(self):
+
+        db = Deadband(lower=-0.5, upper=0.5)
+
+        self.assertEqual(db.lower, -0.5)
+        self.assertEqual(db.upper, 0.5)
+
+
+    def test_len(self):
+
+        #algebraic passthrough
+        db = Deadband()
+        self.assertEqual(len(db), 1)
+
+
+    def test_shape(self):
+
+        db = Deadband()
+        self.assertEqual(db.shape, (1, 1))
+
+
+    def test_embedding_inside(self):
+
+        #input within dead zone -> output is 0
+        db = Deadband(lower=-1.0, upper=1.0)
+
+        def src(t): return 0.5
+        def ref(t): return 0.0
+
+        E = Embedding(db, src, ref)
+        self.assertAlmostEqual(*E.check_SISO(0))
+
+
+    def test_embedding_above(self):
+
+        #input above dead zone -> output is u - upper
+        db = Deadband(lower=-1.0, upper=1.0)
+
+        def src(t): return 3.0
+        def ref(t): return 2.0  # 3.0 - 1.0
+
+        E = Embedding(db, src, ref)
+        self.assertAlmostEqual(*E.check_SISO(0))
+
+
+    def test_embedding_below(self):
+
+        #input below dead zone -> output is u - lower
+        db = Deadband(lower=-1.0, upper=1.0)
+
+        def src(t): return -4.0
+        def ref(t): return -3.0  # -4.0 - (-1.0)
+
+        E = Embedding(db, src, ref)
+        self.assertAlmostEqual(*E.check_SISO(0))
 
 
 

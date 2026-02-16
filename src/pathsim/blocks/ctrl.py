@@ -9,10 +9,11 @@
 
 import numpy as np
 
+from ._block import Block
 from .lti import StateSpace
 from .dynsys import DynamicalSystem
 
-from ..optim.operator import DynamicOperator
+from ..optim.operator import Operator, DynamicOperator
 
 
 # LTI CONTROL BLOCKS (StateSpace subclasses) ============================================
@@ -404,3 +405,116 @@ class RateLimiter(DynamicalSystem):
 
     def __len__(self):
         return 0
+
+
+class Backlash(DynamicalSystem):
+    """Backlash (mechanical play) element.
+
+    Models the hysteresis-like behavior of mechanical backlash in gears,
+    couplings and other systems with play. The output only tracks the input
+    after the input has moved through the full backlash width.
+
+    .. math::
+
+        \\dot{x} = f_\\mathrm{max} \\left((u - x) - \\mathrm{clip}(u - x,\\; -w/2,\\; w/2)\\right)
+
+    where `w` is the total backlash width. Inside the dead zone :math:`|u - x| \\leq w/2`
+    the output does not move. Once the input pushes past the edge, the output
+    tracks with bandwidth `f_max`.
+
+
+    Example
+    -------
+    The block is initialized like this:
+
+    .. code-block:: python
+
+        #backlash with 0.5 units of total play
+        bl = Backlash(width=0.5, f_max=1e3)
+
+
+    Parameters
+    ----------
+    width : float
+        total backlash width (play)
+    f_max : float
+        tracking bandwidth parameter when engaged
+    """
+
+    input_port_labels = {"in": 0}
+    output_port_labels = {"out": 0}
+
+    def __init__(self, width=1.0, f_max=100):
+
+        #backlash parameters
+        self.width = width
+        self.f_max = f_max
+
+        def _f_backlash(x, u, t):
+            gap = u - x
+            hw = self.width / 2.0
+            return self.f_max * (gap - np.clip(gap, -hw, hw))
+
+        super().__init__(
+            func_dyn=_f_backlash,
+            func_alg=lambda x, u, t: x,
+            initial_value=0.0
+            )
+
+
+    def __len__(self):
+        return 0
+
+
+# ALGEBRAIC CONTROL BLOCKS ==============================================================
+
+class Deadband(Block):
+    """Deadband (dead zone) element.
+
+    Outputs zero when the input is within the dead zone, and passes
+    the signal shifted by the zone boundary otherwise:
+
+    .. math::
+
+        y = \\begin{cases}
+            u - u_\\mathrm{upper} & \\text{if } u > u_\\mathrm{upper} \\\\
+            0 & \\text{if } u_\\mathrm{lower} \\leq u \\leq u_\\mathrm{upper} \\\\
+            u - u_\\mathrm{lower} & \\text{if } u < u_\\mathrm{lower}
+        \\end{cases}
+
+    or equivalently :math:`y = u - \\mathrm{clip}(u,\\; u_\\mathrm{lower},\\; u_\\mathrm{upper})`.
+
+
+    Example
+    -------
+    The block is initialized like this:
+
+    .. code-block:: python
+
+        #symmetric dead zone of width 0.2
+        db = Deadband(lower=-0.1, upper=0.1)
+
+
+    Parameters
+    ----------
+    lower : float
+        lower bound of the dead zone
+    upper : float
+        upper bound of the dead zone
+    """
+
+    input_port_labels = {"in": 0}
+    output_port_labels = {"out": 0}
+
+    def __init__(self, lower=-1.0, upper=1.0):
+        super().__init__()
+
+        #deadband parameters
+        self.lower = lower
+        self.upper = upper
+
+        #algebraic operator
+        self.op_alg = Operator(
+            func=lambda u: u - np.clip(u, self.lower, self.upper),
+            jac=lambda u: np.diag(((u < self.lower) | (u > self.upper)).astype(float))
+            )
