@@ -10,7 +10,7 @@
 import numpy as np
 
 from .lti import StateSpace
-from ._block import Block
+from .dynsys import DynamicalSystem
 
 from ..optim.operator import DynamicOperator
 
@@ -347,7 +347,7 @@ class AntiWindupPID(PID):
 
 # NONLINEAR CONTROL BLOCKS ==============================================================
 
-class RateLimiter(Block):
+class RateLimiter(DynamicalSystem):
     """Rate limiter block that limits the rate of change of a signal.
 
     Implements a continuous-time rate limiter as a first-order tracking system
@@ -384,91 +384,23 @@ class RateLimiter(Block):
         maximum rate of change (positive value)
     f_max : float
         tracking bandwidth parameter
-
-    Attributes
-    ----------
-    op_dyn : DynamicOperator
-        internal dynamic operator for rate-limited ODE
     """
 
     input_port_labels = {"in": 0}
     output_port_labels = {"out": 0}
 
     def __init__(self, rate=1.0, f_max=100):
-        super().__init__()
 
         #rate limiter parameters
         self.rate = rate
         self.f_max = f_max
 
-        #initial state for integration engine
-        self.initial_value = 0.0
-
-        #dynamic operator with clipped rate
-        self.op_dyn = DynamicOperator(
-            func=lambda x, u, t: np.clip(self.f_max * (u - x), -self.rate, self.rate)
+        super().__init__(
+            func_dyn=lambda x, u, t: np.clip(self.f_max * (u - x), -self.rate, self.rate),
+            func_alg=lambda x, u, t: x,
+            initial_value=0.0
             )
 
 
     def __len__(self):
         return 0
-
-
-    def update(self, t):
-        """update system equation for fixed point loop
-
-        Note
-        ----
-        Rate limiter does not have passthrough, therefore this
-        method is performance optimized for this case.
-
-        Parameters
-        ----------
-        t : float
-            evaluation time
-        """
-        self.outputs.update_from_array(self.engine.state)
-
-
-    def solve(self, t, dt):
-        """advance solution of implicit update equation
-
-        Parameters
-        ----------
-        t : float
-            evaluation time
-        dt : float
-            integration timestep
-
-        Returns
-        -------
-        error : float
-            solver residual norm
-        """
-        x, u = self.engine.state, self.inputs.to_array()
-        f, J = self.op_dyn(x, u, t), self.op_dyn.jac_x(x, u, t)
-        return self.engine.solve(f, J, dt)
-
-
-    def step(self, t, dt):
-        """compute update step with integration engine
-
-        Parameters
-        ----------
-        t : float
-            evaluation time
-        dt : float
-            integration timestep
-
-        Returns
-        -------
-        success : bool
-            step was successful
-        error : float
-            local truncation error from adaptive integrators
-        scale : float
-            timestep rescale from adaptive integrators
-        """
-        x, u = self.engine.state, self.inputs.to_array()
-        f = self.op_dyn(x, u, t)
-        return self.engine.step(f, dt)
