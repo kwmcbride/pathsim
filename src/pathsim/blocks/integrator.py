@@ -127,22 +127,18 @@ class Integrator(Block):
     
     
     def reset(self):
-        """Reset block and initialize solver state from `initial_value`.
+        """Reset block and initialize solver state from ``initial_value``.
 
         Notes
         -----
-        This implementation initializes the solver state directly. It does not
-        require a `super().reset(...)` call, but it does require the integration
-        engine to be attached and to expose a writable `state` array.
+        The integration engine's ``state`` array is the actual simulation
+        variable.  Simply setting ``self.initial_value`` (e.g. via a
+        :class:`Parameter`) does **not** propagate to the engine — that
+        only happens here, during reset.  This is called automatically by
+        ``Simulation.reset()`` before every run.
         """
+        super().reset()
         eng = getattr(self, "engine", None)
         state = getattr(eng, "state", None) if eng is not None else None
-        if state is None:
-            raise RuntimeError(
-                "Integrator.reset() requires an attached solver engine with a writable "
-                "`engine.state`. Ensure the simulation has initialized solvers before "
-                "calling reset(), or call super().reset(...) in a context where the "
-                "engine is created."
-            )
-
-        state[...] = float(self.initial_value)
+        if state is not None:
+            state[...] = float(self.initial_value)
