@@ -65,8 +65,10 @@ class Block:
         input value register of block
     outputs : Register
         output value register of block
+    state : None | float | np.ndarray
+        state of `engine` exposed as a property, only exists for dynamic blocks
     engine : None | Solver
-        numerical integrator instance
+        numerical integrator instance, only exists for dynamic blocks
     events : list[Event]
         list of internal events, for mixed signal blocks
     _active : bool
@@ -485,6 +487,41 @@ class Block:
         _outputs = self.outputs.to_array()
         _states  = self.engine.state if self.engine else []
         return _inputs, _outputs, _states
+
+
+    @property
+    def state(self):
+        """Expose the state of the internal integration engine / 
+        `Solver` instance as an attribute of `Block`. 
+    
+        Note
+        ----
+        Only applies to blocks that are dynamic.
+
+        Returns
+        -------
+        state : None, float, np.ndarray
+            returns the current state of the block if the block is dynamic 
+            (has an internal `Solver` instance), otherwise returns `None`
+        """
+        return self.engine.state if self.engine else None
+
+
+    @state.setter
+    def state(self, val):
+        """Setter method for the exposed internal `Solver` instance. 
+        
+        Note
+        ----
+        Only applies to blocks that are dynamic.
+
+        Parameters
+        ----------
+        val : float, np.ndarray
+            value to set internal solver state to
+        """
+        if self.engine:
+            self.engine.state = val
 
 
     # methods for block output and state updates ----------------------------------------
