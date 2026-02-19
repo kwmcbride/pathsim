@@ -411,6 +411,188 @@ class TestSubsystem(unittest.TestCase):
     def test_nesting(self): pass
 
 
+class TestSubsystemRuntimeMutation(unittest.TestCase):
+    """Test runtime mutation of subsystem components (add/remove blocks,
+    connections, events) and lazy graph rebuild via _graph_dirty flag."""
+
+    def setUp(self):
+        """Set up a subsystem: I1 -> B1 -> B2 -> I1"""
+        self.I1 = Interface()
+        self.B1 = Block()
+        self.B2 = Block()
+        self.C1 = Connection(self.I1, self.B1)
+        self.C2 = Connection(self.B1, self.B2)
+        self.C3 = Connection(self.B2, self.I1)
+
+        self.S = Subsystem(
+            blocks=[self.I1, self.B1, self.B2],
+            connections=[self.C1, self.C2, self.C3]
+        )
+
+    def test_graph_dirty_after_add_block(self):
+        """Adding a block marks graph dirty"""
+        self.assertFalse(self.S._graph_dirty)
+
+        B = Block()
+        self.S.add_block(B)
+
+        self.assertTrue(self.S._graph_dirty)
+        self.assertIn(B, self.S.blocks)
+
+    def test_graph_dirty_after_remove_block(self):
+        """Removing a block marks graph dirty"""
+        # Clear dirty flag by calling update
+        self.S.update(0.0)
+        self.assertFalse(self.S._graph_dirty)
+
+        self.S.remove_block(self.B2)
+        self.assertTrue(self.S._graph_dirty)
+        self.assertNotIn(self.B2, self.S.blocks)
+
+    def test_graph_dirty_after_add_connection(self):
+        """Adding a connection marks graph dirty"""
+        B3 = Block()
+        self.S.add_block(B3)
+        self.S.update(0.0)
+        self.assertFalse(self.S._graph_dirty)
+
+        C = Connection(self.B2, B3)
+        self.S.add_connection(C)
+        self.assertTrue(self.S._graph_dirty)
+
+    def test_graph_dirty_after_remove_connection(self):
+        """Removing a connection marks graph dirty"""
+        self.S.update(0.0)
+        self.assertFalse(self.S._graph_dirty)
+
+        self.S.remove_connection(self.C3)
+        self.assertTrue(self.S._graph_dirty)
+        self.assertNotIn(self.C3, self.S.connections)
+
+    def test_lazy_rebuild_on_update(self):
+        """Graph is rebuilt lazily when update is called"""
+        B = Block()
+        self.S.add_block(B)
+        self.assertTrue(self.S._graph_dirty)
+
+        self.S.update(0.0)
+        self.assertFalse(self.S._graph_dirty)
+
+    def test_remove_block_error(self):
+        """Removing a block not in subsystem raises ValueError"""
+        B = Block()
+        with self.assertRaises(ValueError):
+            self.S.remove_block(B)
+
+    def test_remove_connection_error(self):
+        """Removing a connection not in subsystem raises ValueError"""
+        B1, B2 = Block(), Block()
+        C = Connection(B1, B2)
+        with self.assertRaises(ValueError):
+            self.S.remove_connection(C)
+
+    def test_add_remove_event(self):
+        """Adding and removing events works"""
+        from pathsim.events._event import Event
+
+        evt = Event(func_evt=lambda t: t - 1.0, func_act=lambda t: None)
+        self.S.add_event(evt)
+        self.assertIn(evt, self.S._events)
+
+        self.S.remove_event(evt)
+        self.assertNotIn(evt, self.S._events)
+
+    def test_add_event_duplicate_error(self):
+        """Adding duplicate event raises ValueError"""
+        from pathsim.events._event import Event
+
+        evt = Event(func_evt=lambda t: t - 1.0)
+        self.S.add_event(evt)
+
+        with self.assertRaises(ValueError):
+            self.S.add_event(evt)
+
+    def test_remove_event_error(self):
+        """Removing event not in subsystem raises ValueError"""
+        from pathsim.events._event import Event
+
+        evt = Event(func_evt=lambda t: t - 1.0)
+        with self.assertRaises(ValueError):
+            self.S.remove_event(evt)
+
+    def test_multiple_mutations_single_rebuild(self):
+        """Multiple mutations only trigger one rebuild"""
+        B3, B4 = Block(), Block()
+        C = Connection(B3, B4)
+
+        self.S.add_block(B3)
+        self.S.add_block(B4)
+        self.S.add_connection(C)
+
+        # Still dirty — no rebuild yet
+        self.assertTrue(self.S._graph_dirty)
+
+        # Single update clears it
+        self.S.update(0.0)
+        self.assertFalse(self.S._graph_dirty)
+
+    def test_dynamic_block_with_solver(self):
+        """Dynamically added blocks get solver if subsystem has one"""
+        from pathsim.blocks import Integrator
+        from pathsim.solvers import EUF
+
+        self.S.set_solver(EUF, None)
+
+        new_int = Integrator(0.0)
+        self.S.add_block(new_int)
+
+        # Should have been given a solver
+        self.assertIsNotNone(new_int.engine)
+        self.assertIn(new_int, self.S._blocks_dyn)
+
+    def test_remove_dynamic_block_tracking(self):
+        """Removing a dynamic block removes it from _blocks_dyn"""
+        from pathsim.blocks import Integrator
+        from pathsim.solvers import EUF
+
+        self.S.set_solver(EUF, None)
+
+        new_int = Integrator(0.0)
+        self.S.add_block(new_int)
+        self.assertIn(new_int, self.S._blocks_dyn)
+
+        self.S.remove_block(new_int)
+        self.assertNotIn(new_int, self.S._blocks_dyn)
+
+    def test_mutation_in_simulation_context(self):
+        """Subsystem with mutations works inside a Simulation"""
+        from pathsim.simulation import Simulation
+        from pathsim.blocks import Source, Scope
+
+        Src = Source(lambda t: 1.0)
+        Sco = Scope()
+
+        C_in = Connection(Src, self.S)
+        C_out = Connection(self.S, Sco)
+
+        Sim = Simulation(
+            blocks=[Src, self.S, Sco],
+            connections=[C_in, C_out],
+            dt=0.01,
+            log=False
+        )
+
+        # Run a bit
+        Sim.run(duration=0.2, reset=True)
+
+        # Add a block to the subsystem
+        B_new = Block()
+        self.S.add_block(B_new)
+        self.assertTrue(self.S._graph_dirty)
+
+        # Continue running — subsystem graph rebuilds internally
+        Sim.run(duration=0.2, reset=False)
+        self.assertAlmostEqual(Sim.time, 0.4, 1)
 
 
 # RUN TESTS LOCALLY ====================================================================

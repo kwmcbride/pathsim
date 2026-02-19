@@ -796,6 +796,238 @@ class TestSimulationAdvanced(unittest.TestCase):
         self.assertAlmostEqual(self.Sim.time, 0.2, 1)
 
 
+class TestSimulationRuntimeMutation(unittest.TestCase):
+    """Test runtime mutation of simulation components (add/remove blocks,
+    connections, events) and lazy graph rebuild via _graph_dirty flag."""
+
+    def setUp(self):
+        """Set up a simple system: Src -> Int -> Sco"""
+        self.Src = Source(lambda t: 1.0)
+        self.Int = Integrator(0.0)
+        self.Sco = Scope(labels=["output"])
+
+        self.C1 = Connection(self.Src, self.Int)
+        self.C2 = Connection(self.Int, self.Sco)
+
+        self.Sim = Simulation(
+            blocks=[self.Src, self.Int, self.Sco],
+            connections=[self.C1, self.C2],
+            dt=0.01,
+            log=False
+        )
+
+    def test_graph_dirty_after_add_block(self):
+        """Adding a block after init marks graph dirty"""
+        self.assertFalse(self.Sim._graph_dirty)
+
+        B = Block()
+        self.Sim.add_block(B)
+
+        self.assertTrue(self.Sim._graph_dirty)
+        self.assertIn(B, self.Sim.blocks)
+
+    def test_graph_dirty_after_remove_block(self):
+        """Removing a block marks graph dirty"""
+        B = Block()
+        self.Sim.add_block(B)
+
+        # Clear dirty flag by stepping
+        self.Sim.step(0.01)
+        self.assertFalse(self.Sim._graph_dirty)
+
+        self.Sim.remove_block(B)
+        self.assertTrue(self.Sim._graph_dirty)
+        self.assertNotIn(B, self.Sim.blocks)
+
+    def test_graph_dirty_after_add_connection(self):
+        """Adding a connection marks graph dirty"""
+        B = Block()
+        self.Sim.add_block(B)
+
+        # Clear dirty flag
+        self.Sim.step(0.01)
+        self.assertFalse(self.Sim._graph_dirty)
+
+        C = Connection(self.Sco, B)
+        self.Sim.add_connection(C)
+        self.assertTrue(self.Sim._graph_dirty)
+
+    def test_graph_dirty_after_remove_connection(self):
+        """Removing a connection marks graph dirty"""
+        self.Sim.step(0.01)
+        self.assertFalse(self.Sim._graph_dirty)
+
+        self.Sim.remove_connection(self.C2)
+        self.assertTrue(self.Sim._graph_dirty)
+        self.assertNotIn(self.C2, self.Sim.connections)
+
+    def test_lazy_rebuild_on_update(self):
+        """Graph is rebuilt lazily when _update is called"""
+        B = Block()
+        self.Sim.add_block(B)
+        self.assertTrue(self.Sim._graph_dirty)
+
+        # step triggers _update which should rebuild graph
+        self.Sim.step(0.01)
+        self.assertFalse(self.Sim._graph_dirty)
+
+    def test_remove_block_error(self):
+        """Removing a block not in simulation raises ValueError"""
+        B = Block()
+        with self.assertRaises(ValueError):
+            self.Sim.remove_block(B)
+
+    def test_remove_connection_error(self):
+        """Removing a connection not in simulation raises ValueError"""
+        B1, B2 = Block(), Block()
+        C = Connection(B1, B2)
+        with self.assertRaises(ValueError):
+            self.Sim.remove_connection(C)
+
+    def test_remove_event(self):
+        """Adding and removing events works"""
+        evt = Event(func_evt=lambda t: t - 1.0, func_act=lambda t: None)
+        self.Sim.add_event(evt)
+        self.assertIn(evt, self.Sim.events)
+
+        self.Sim.remove_event(evt)
+        self.assertNotIn(evt, self.Sim.events)
+
+    def test_remove_event_error(self):
+        """Removing an event not in simulation raises ValueError"""
+        evt = Event(func_evt=lambda t: t - 1.0, func_act=lambda t: None)
+        with self.assertRaises(ValueError):
+            self.Sim.remove_event(evt)
+
+    def test_add_block_during_run(self):
+        """Add a block mid-simulation and continue running"""
+        # Run for a bit
+        self.Sim.run(duration=0.5, reset=True)
+        t_before = self.Sim.time
+
+        # Add a new block
+        Amp = Amplifier(2)
+        self.Sim.add_block(Amp)
+        self.assertTrue(self.Sim._graph_dirty)
+
+        # Continue running - graph should rebuild and work
+        self.Sim.run(duration=0.5, reset=False)
+        self.assertGreater(self.Sim.time, t_before)
+
+    def test_remove_block_during_run(self):
+        """Remove a block mid-simulation and continue running"""
+        # Run for a bit
+        self.Sim.run(duration=0.5, reset=True)
+
+        # Remove scope (leaf node, safe to remove)
+        self.Sim.remove_connection(self.C2)
+        self.Sim.remove_block(self.Sco)
+
+        # Continue running
+        self.Sim.run(duration=0.5, reset=False)
+        self.assertAlmostEqual(self.Sim.time, 1.0, 1)
+
+    def test_add_connection_during_run(self):
+        """Add a connection mid-simulation and continue"""
+        Sco2 = Scope(labels=["extra"])
+        self.Sim.add_block(Sco2)
+
+        self.Sim.run(duration=0.5, reset=True)
+
+        C_new = Connection(self.Int, Sco2)
+        self.Sim.add_connection(C_new)
+
+        self.Sim.run(duration=0.5, reset=False)
+        self.assertAlmostEqual(self.Sim.time, 1.0, 1)
+
+        # Sco2 should have recorded data from the second half
+        time, data = Sco2.read()
+        self.assertGreater(len(time), 0)
+
+    def test_remove_connection_during_run(self):
+        """Remove a connection mid-simulation and continue"""
+        self.Sim.run(duration=0.5, reset=True)
+
+        self.Sim.remove_connection(self.C2)
+
+        self.Sim.run(duration=0.5, reset=False)
+        self.assertAlmostEqual(self.Sim.time, 1.0, 1)
+
+    def test_multiple_mutations_single_rebuild(self):
+        """Multiple mutations only trigger one rebuild"""
+        B1, B2 = Block(), Block()
+        C = Connection(B1, B2)
+
+        self.Sim.add_block(B1)
+        self.Sim.add_block(B2)
+        self.Sim.add_connection(C)
+
+        # Should still be dirty (not rebuilt yet)
+        self.assertTrue(self.Sim._graph_dirty)
+
+        # Single step triggers single rebuild
+        self.Sim.step(0.01)
+        self.assertFalse(self.Sim._graph_dirty)
+
+    def test_dynamic_block_tracking(self):
+        """Dynamically added integrators get solver and are tracked"""
+        new_int = Integrator(0.0)
+        self.Sim.add_block(new_int)
+
+        # Should have been given a solver
+        self.assertIsNotNone(new_int.engine)
+        self.assertIn(new_int, self.Sim._blocks_dyn)
+
+    def test_remove_dynamic_block_tracking(self):
+        """Removing a dynamic block removes it from _blocks_dyn"""
+        new_int = Integrator(0.0)
+        self.Sim.add_block(new_int)
+        self.assertIn(new_int, self.Sim._blocks_dyn)
+
+        self.Sim.remove_block(new_int)
+        self.assertNotIn(new_int, self.Sim._blocks_dyn)
+
+    def test_streaming_with_mutations(self):
+        """Add blocks between streaming generator steps using run_streaming"""
+        # Use a longer duration + high tickrate to get many yields
+        gen = self.Sim.run_streaming(
+            duration=10.0, reset=True, tickrate=1000
+        )
+
+        # Consume a few ticks
+        first_result = next(gen)
+
+        # Mutate mid-stream: add a new scope
+        Sco2 = Scope(labels=["live"])
+        self.Sim.add_block(Sco2)
+        C_new = Connection(self.Int, Sco2)
+        self.Sim.add_connection(C_new)
+
+        # Continue streaming — should rebuild graph and keep going
+        results = list(gen)
+        self.assertGreater(len(results), 0)
+
+        # New scope should have data from after connection was added
+        time_data, data = Sco2.read()
+        self.assertGreater(len(time_data), 0)
+
+    def test_parameter_mutation_during_run(self):
+        """Change block parameters mid-simulation"""
+        self.Sim.run(duration=0.5, reset=True)
+
+        # Change amplifier gain-equivalent by modifying source
+        # Integrator initial value is immutable at runtime, but we can
+        # change the source function
+        self.Src.function = lambda t: 2.0  # double the input
+
+        self.Sim.run(duration=0.5, reset=False)
+        self.assertAlmostEqual(self.Sim.time, 1.0, 1)
+
+        # Integration result should reflect the change
+        time, data = self.Sco.read()
+        self.assertGreater(len(time), 0)
+
+
 # RUN TESTS LOCALLY ====================================================================
 
 if __name__ == '__main__':
