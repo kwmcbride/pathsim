@@ -337,6 +337,11 @@ class Subsystem(Block):
         if connection not in self.connections:
             raise ValueError(f"{connection} not part of subsystem")
 
+        #zero out target input ports to avoid stale values
+        for target in connection.targets:
+            for port in target.ports:
+                target.block.inputs[port] = 0.0
+
         self.connections.discard(connection)
 
         if self.graph:

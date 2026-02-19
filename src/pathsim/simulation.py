@@ -446,6 +446,11 @@ class Simulation:
             self.logger.error(_msg)
             raise ValueError(_msg)
 
+        #zero out target input ports to avoid stale values
+        for target in connection.targets:
+            for port in target.ports:
+                target.block.inputs[port] = 0.0
+
         #remove from global connection list
         self.connections.discard(connection)
 

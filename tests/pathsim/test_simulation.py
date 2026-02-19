@@ -884,6 +884,21 @@ class TestSimulationRuntimeMutation(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.Sim.remove_connection(C)
 
+    def test_remove_connection_zeroes_inputs(self):
+        """Removing a connection zeroes the target block's input ports"""
+        # Run a step so the connection pushes data
+        self.Src.function = lambda t: 5.0
+        self.Sim.step(0.01)
+
+        # Int should have received input from Src
+        self.assertNotEqual(self.Int.inputs[0], 0.0)
+
+        # Remove the connection
+        self.Sim.remove_connection(self.C1)
+
+        # Target input should now be zero
+        self.assertEqual(self.Int.inputs[0], 0.0)
+
     def test_remove_event(self):
         """Adding and removing events works"""
         evt = Event(func_evt=lambda t: t - 1.0, func_act=lambda t: None)
