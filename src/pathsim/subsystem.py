@@ -298,7 +298,7 @@ class Subsystem(Block):
         self.blocks.discard(block)
 
         #remove from dynamic list
-        if block in self._blocks_dyn:
+        if hasattr(self, '_blocks_dyn') and block in self._blocks_dyn:
             self._blocks_dyn.remove(block)
 
         if self.graph:
