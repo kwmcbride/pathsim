@@ -446,11 +446,6 @@ class Simulation:
             self.logger.error(_msg)
             raise ValueError(_msg)
 
-        #zero out target input ports to avoid stale values
-        for target in connection.targets:
-            for port in target.ports:
-                target.block.inputs[port] = 0.0
-
         #remove from global connection list
         self.connections.discard(connection)
 
@@ -504,9 +499,13 @@ class Simulation:
     # system assembly -------------------------------------------------------------
 
     def _assemble_graph(self):
-        """Build the internal graph representation for fast system function 
+        """Build the internal graph representation for fast system function
         evaluation and algebraic loop resolution.
         """
+
+        #reset all block inputs to clear stale values from removed connections
+        for block in self.blocks:
+            block.inputs.reset()
 
         #time the graph construction
         with Timer(verbose=False) as T:

@@ -337,11 +337,6 @@ class Subsystem(Block):
         if connection not in self.connections:
             raise ValueError(f"{connection} not part of subsystem")
 
-        #zero out target input ports to avoid stale values
-        for target in connection.targets:
-            for port in target.ports:
-                target.block.inputs[port] = 0.0
-
         self.connections.discard(connection)
 
         if self.graph:
@@ -386,6 +381,11 @@ class Subsystem(Block):
         """Assemble internal graph of subsystem for fast
         algebraic evaluation during simulation.
         """
+
+        #reset all block inputs to clear stale values from removed connections
+        for block in self.blocks:
+            block.inputs.reset()
+
         self.graph = Graph({*self.blocks, self.interface}, self.connections)
         self._graph_dirty = False
 

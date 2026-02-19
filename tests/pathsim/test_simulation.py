@@ -885,7 +885,7 @@ class TestSimulationRuntimeMutation(unittest.TestCase):
             self.Sim.remove_connection(C)
 
     def test_remove_connection_zeroes_inputs(self):
-        """Removing a connection zeroes the target block's input ports"""
+        """Removing a connection zeroes target inputs on next graph rebuild"""
         # Run a step so the connection pushes data
         self.Src.function = lambda t: 5.0
         self.Sim.step(0.01)
@@ -893,10 +893,12 @@ class TestSimulationRuntimeMutation(unittest.TestCase):
         # Int should have received input from Src
         self.assertNotEqual(self.Int.inputs[0], 0.0)
 
-        # Remove the connection
+        # Remove the connection — graph is dirty but not rebuilt yet
         self.Sim.remove_connection(self.C1)
+        self.assertTrue(self.Sim._graph_dirty)
 
-        # Target input should now be zero
+        # Next step triggers graph rebuild which resets inputs
+        self.Sim.step(0.01)
         self.assertEqual(self.Int.inputs[0], 0.0)
 
     def test_remove_event(self):
