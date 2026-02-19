@@ -194,6 +194,7 @@ class Simulation:
 
         #internal system graph -> initialized later
         self.graph = None
+        self._graph_dirty = False
 
         #internal algebraic loop solvers -> initialized later
         self.boosters = None
@@ -366,13 +367,45 @@ class Simulation:
         #add block to global blocklist
         self.blocks.add(block)
 
-        #if graph already exists, it needs to be rebuilt
+        #if graph already exists, mark it for rebuild
         if not _defer_graph and self.graph:
-            self._assemble_graph()
+            self._graph_dirty = True
+
+
+    def remove_block(self, block):
+        """Removes a block from the simulation.
+
+        This works dynamically for running simulations. The graph
+        is lazily rebuilt on the next simulation update.
+
+        Parameters
+        ----------
+        block : Block
+            block to remove from the simulation
+        """
+
+        #check if block is in block list
+        if block not in self.blocks:
+            _msg = f"block {block} not part of simulation"
+            self.logger.error(_msg)
+            raise ValueError(_msg)
+
+        #remove from global blocklist
+        self.blocks.discard(block)
+
+        #remove from dynamic list
+        self._blocks_dyn.discard(block)
+
+        #remove from eventful list
+        self._blocks_evt.discard(block)
+
+        #mark graph for rebuild
+        if self.graph:
+            self._graph_dirty = True
 
 
     def add_connection(self, connection, _defer_graph=False):
-        """Adds a new connection to the simulaiton and checks if 
+        """Adds a new connection to the simulaiton and checks if
         the new connection overwrites any existing connections.
 
         This works dynamically for running simulations.
@@ -394,9 +427,35 @@ class Simulation:
         #add connection to global connection list
         self.connections.add(connection)
 
-        #if graph already exists, it needs to be rebuilt
+        #if graph already exists, mark it for rebuild
         if not _defer_graph and self.graph:
-            self._assemble_graph()
+            self._graph_dirty = True
+
+
+    def remove_connection(self, connection):
+        """Removes a connection from the simulation.
+
+        This works dynamically for running simulations. The graph
+        is lazily rebuilt on the next simulation update.
+
+        Parameters
+        ----------
+        connection : Connection
+            connection to remove from the simulation
+        """
+
+        #check if connection is in connection list
+        if connection not in self.connections:
+            _msg = f"{connection} not part of simulation"
+            self.logger.error(_msg)
+            raise ValueError(_msg)
+
+        #remove from global connection list
+        self.connections.discard(connection)
+
+        #mark graph for rebuild
+        if self.graph:
+            self._graph_dirty = True
 
 
     def add_event(self, event):
@@ -420,6 +479,27 @@ class Simulation:
         self.events.add(event)
 
 
+    def remove_event(self, event):
+        """Removes an event from the simulation.
+
+        This works dynamically for running simulations.
+
+        Parameters
+        ----------
+        event : Event
+            event to remove from the simulation
+        """
+
+        #check if event is in event list
+        if event not in self.events:
+            _msg = f"{event} not part of simulation"
+            self.logger.error(_msg)
+            raise ValueError(_msg)
+
+        #remove from global event list
+        self.events.discard(event)
+
+
     # system assembly -------------------------------------------------------------
 
     def _assemble_graph(self):
@@ -430,6 +510,7 @@ class Simulation:
         #time the graph construction
         with Timer(verbose=False) as T:
             self.graph = Graph(self.blocks, self.connections)
+        self._graph_dirty = False
 
         #create boosters for loop closing connections
         if self.graph.has_loops:
@@ -711,11 +792,16 @@ class Simulation:
             evaluation time for system function
         """
 
+        #lazy graph rebuild if dirty
+        if self._graph_dirty:
+            self._assemble_graph()
+            self._graph_dirty = False
+
         #evaluate DAG
         self._dag(t)
 
         #algebraic loops -> solve them
-        if self.graph.has_loops:   
+        if self.graph.has_loops:
             self._loops(t)
 
 
