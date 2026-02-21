@@ -19,7 +19,7 @@ from ..optim.operator import Operator
 # MISO BLOCKS ===========================================================================
 
 class Adder(Block):
-    """Summs / adds up all input signals to a single output signal (MISO)
+    """Sums / adds up all input signals to a single output signal (MISO)
     
     This is how it works in the default case
 

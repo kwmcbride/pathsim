@@ -108,24 +108,16 @@ class Register:
     
 
     def __setitem__(self, key, value):
-        """Set the value at key index for direct access
-        to the register values.
-
-        Parameters
-        ----------
-        key : int, str
-            port key, where to set value
-        val : float, obj
-            value to set at port
-        """
-        max_idx = self._get_max_index(self._map(key))
+        """Set the value at key index for direct access to the register values."""
+        mapped_key = self._map(key)
+        max_idx = self._get_max_index(mapped_key)
         self.resize(max_idx + 1)
 
-        #convert to scalar if needed to avoid numpy deprecation warning
+        # convert to scalar if needed to avoid numpy deprecation warning
         if isinstance(value, np.ndarray) and value.ndim == 0:
             value = value.item()
 
-        self._data[key] = value
+        self._data[mapped_key] = value
 
 
     def resize(self, size):

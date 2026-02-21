@@ -38,5 +38,6 @@ write_to = "src/pathsim/_version.py"
 
 [dependency-groups]
 dev = [
+    "ipykernel>=6.29.5",
     "pytest>=8.3.5",
 ]
