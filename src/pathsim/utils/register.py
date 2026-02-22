@@ -40,6 +40,7 @@ class Register:
     __slots__ = ["_data", "_mapping"]
     
     def __init__(self, size=None, mapping=None, dtype=np.float64):
+        # Default to dtype=object for outputs
         self._data = np.zeros(1 if size is None else size, dtype=dtype)
         self._mapping = {} if mapping is None else mapping
     
@@ -117,7 +118,11 @@ class Register:
         if isinstance(value, np.ndarray) and value.ndim == 0:
             value = value.item()
 
-        self._data[mapped_key] = value
+        # Always map string keys to integer indices
+        if isinstance(mapped_key, int):
+            self._data[mapped_key] = value
+        else:
+            raise IndexError(f"Register: Unsupported key type {type(mapped_key)} for setitem. Only integer keys are allowed after mapping.")
 
 
     def resize(self, size):
@@ -133,9 +138,9 @@ class Register:
             new size for the internal data array
         """
         if size > len(self._data):
-            new_data = np.zeros(size)
+            new_data = np.zeros(size, dtype=self._data.dtype)
             new_data[:len(self._data)] = self._data
-            self._data = new_data          
+            self._data = new_data
 
 
     def reset(self):
