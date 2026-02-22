@@ -144,16 +144,13 @@ class PortReference:
         dst_data = other.block.inputs._data
         for i, dst_idx in enumerate(dst_indices):
             value = src_data[i]
-            print(f"[DEBUG] PortReference.to(): assigning value={value} to dst_idx={dst_idx}, dtype={dst_data.dtype}")
             # Robust dtype check for dict assignment
             if isinstance(value, dict):
                 if dst_data.dtype != object:
                     raise TypeError(f"Cannot assign dict to port {dst_idx} with dtype {dst_data.dtype}. Value: {value}")
                 dst_data[dst_idx] = value
-                print(f"[DEBUG] PortReference.to(): assigned dict to port {dst_idx} (bus/nested bus)")
             else:
                 dst_data[dst_idx] = value
-                print(f"[DEBUG] PortReference.to(): assigned scalar or 0.0 to port {dst_idx}")
 
 
     def get_inputs(self):

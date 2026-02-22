@@ -7,6 +7,6 @@ except Exception:
 
 from .simulation import Simulation
 from .connection import Connection, Duplex
-from .busconnection import BusConnection
+# from .busconnection import BusConnection
 from .subsystem import Subsystem, Interface
 from .utils.logger import LoggerManager
