@@ -1,6 +1,7 @@
 from .differentiator import *
 from .integrator import *
 from .multiplier import *
+from .divider import *
 from .converters import *
 from .comparator import *
 from .samplehold import *
