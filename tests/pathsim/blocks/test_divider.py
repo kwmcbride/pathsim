@@ -26,7 +26,7 @@ class TestDivider(unittest.TestCase):
 
         # default initialization
         D = Divider()
-        self.assertIsNone(D.operations)
+        self.assertEqual(D.operations, "*/")
 
         # valid ops strings
         for ops in ["*", "/", "*/", "/*", "**/", "/**"]:
@@ -47,11 +47,11 @@ class TestDivider(unittest.TestCase):
     def test_embedding(self):
         """Test algebraic output against reference via Embedding."""
 
-        # default: multiply all (identical to Multiplier)
+        # default: '*/' — u0 * u2 * ... / u1
         D = Divider()
 
-        def src(t): return np.cos(t), np.sin(t) + 2, 3.0, t + 1
-        def ref(t): return np.cos(t) * (np.sin(t) + 2) * 3.0 * (t + 1)
+        def src(t): return t + 1, np.cos(t) + 2, 3.0
+        def ref(t): return (t + 1) * 3.0 / (np.cos(t) + 2)
 
         E = Embedding(D, src, ref)
         for t in range(10): self.assertEqual(*E.check_MIMO(t))
@@ -97,11 +97,11 @@ class TestDivider(unittest.TestCase):
     def test_linearization(self):
         """Test linearize / delinearize round-trip."""
 
-        # default (multiply all) — nonlinear, so only check at linearization point
+        # default ('*/') — nonlinear, so only check at linearization point
         D = Divider()
 
-        def src(t): return np.cos(t) + 2, t + 1, 3.0
-        def ref(t): return (np.cos(t) + 2) * (t + 1) * 3.0
+        def src(t): return np.cos(t) + 2, t + 1
+        def ref(t): return (np.cos(t) + 2) / (t + 1)
 
         E = Embedding(D, src, ref)
 
@@ -145,14 +145,15 @@ class TestDivider(unittest.TestCase):
 
     def test_update_multi(self):
 
+        # default '*/' with 3 inputs: ops=[*, /, *] → (u0 * u2) / u1
         D = Divider()
 
-        D.inputs[0] = 2.0
-        D.inputs[1] = 3.0
-        D.inputs[2] = 4.0
+        D.inputs[0] = 6.0
+        D.inputs[1] = 2.0
+        D.inputs[2] = 3.0
         D.update(None)
 
-        self.assertEqual(D.outputs[0], 24.0)
+        self.assertEqual(D.outputs[0], 9.0)
 
 
     def test_update_ops(self):

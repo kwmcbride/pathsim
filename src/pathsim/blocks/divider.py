@@ -42,7 +42,7 @@ class Divider(Block):
 
     Example
     -------
-    Default initialization multiplies all inputs (same as :class:`Multiplier`):
+    Default initialization multiplies the first input and divides by the second:
 
     .. code-block:: python
 
@@ -79,7 +79,8 @@ class Divider(Block):
     operations : str, optional
         String of ``*`` and ``/`` characters indicating which inputs are
         multiplied (``*``) or divided (``/``). Inputs beyond the length of
-        the string default to ``*``. ``None`` multiplies all inputs.
+        the string default to ``*``. Defaults to ``'*/'`` (divide second
+        input by first).
     zero_div : str, optional
         Behaviour when a denominator input is zero. One of:
 
@@ -107,7 +108,7 @@ class Divider(Block):
     input_port_labels = None
     output_port_labels = {"out": 0}
 
-    def __init__(self, operations=None, zero_div="warn"):
+    def __init__(self, operations="*/", zero_div="warn"):
         super().__init__()
 
         # validate zero_div
