@@ -534,6 +534,144 @@ class Simulation:
                 )
             )
 
+        #compile bus connections to flat float64 arrays
+        self._prepare_buses()
+
+
+    def _prepare_buses(self):
+        """Compile all bus connections to flat float64 arrays.
+
+        Called once at the end of ``_assemble_graph()``.  For every
+        :class:`~pathsim.blocks.buses.BusCreator` this pre-allocates a
+        ``float64`` output array and records the integer slot mappings so
+        that :meth:`~pathsim.blocks.buses.BusCreator.update` never builds
+        Python dicts at runtime.  The corresponding flat layout is then
+        propagated to every connected
+        :class:`~pathsim.blocks.buses.BusSelector` so it can use direct
+        integer indexing instead of ``dict.get`` calls.
+
+        Both steps recurse through arbitrarily nested Subsystems.
+        """
+        from .blocks.buses import BusCreator
+        from .subsystem import Subsystem
+
+        # ------------------------------------------------------------------
+        # Step 1: prepare every BusCreator at any nesting depth
+        # ------------------------------------------------------------------
+        def _prepare_creators(blocks):
+            for block in blocks:
+                if isinstance(block, BusCreator):
+                    block.prepare()
+                elif isinstance(block, Subsystem):
+                    _prepare_creators(block.blocks)
+
+        _prepare_creators(self.blocks)
+
+        # ------------------------------------------------------------------
+        # Step 2: propagate flat layouts to BusSelectors at every level
+        # ------------------------------------------------------------------
+        def _propagate(connections, blocks):
+            from .blocks.buses import BusSelector
+            from .subsystem import Subsystem
+
+            for conn in connections:
+                for src_port in conn.source.ports:
+                    layout = self._get_block_output_bus_layout(
+                        conn.source.block, src_port
+                    )
+                    if layout is None:
+                        continue
+                    for target_ref in conn.targets:
+                        tgt = target_ref.block
+                        if isinstance(tgt, BusSelector):
+                            tgt.prepare(layout)
+                        elif isinstance(tgt, Subsystem):
+                            for tgt_port in target_ref.ports:
+                                self._propagate_bus_into_subsystem(
+                                    tgt, tgt_port, layout
+                                )
+
+            # Recurse into nested Subsystems
+            for block in blocks:
+                if isinstance(block, Subsystem):
+                    _propagate(block.connections, block.blocks)
+
+        _propagate(self.connections, self.blocks)
+
+
+    def _get_block_output_bus_layout(self, block, port):
+        """Return the flat layout if *(block, port)* outputs a bus signal.
+
+        Recurses through :class:`~pathsim.subsystem.Subsystem` boundaries
+        so that buses produced deep inside nested subsystems are found
+        correctly.
+
+        Parameters
+        ----------
+        block : Block
+        port : int
+            Integer output-port index of *block*.
+
+        Returns
+        -------
+        dict[str, int] or None
+        """
+        from .blocks.buses import BusCreator
+        from .subsystem import Subsystem
+
+        if isinstance(block, BusCreator):
+            return block.flat_layout if port == 0 else None
+
+        if isinstance(block, Subsystem):
+            # Subsystem output port N = interface.inputs[N].
+            # Find the internal connection that writes to interface.inputs[N]
+            # and recursively ask what layout that source carries.
+            interface = block.interface
+            for conn in block.connections:
+                for target_ref in conn.targets:
+                    if target_ref.block is interface and port in target_ref.ports:
+                        src_port = conn.source.ports[0]
+                        return self._get_block_output_bus_layout(
+                            conn.source.block, src_port
+                        )
+
+        return None
+
+
+    def _propagate_bus_into_subsystem(self, subsystem, port, flat_layout):
+        """Propagate *flat_layout* into *subsystem* through input *port*.
+
+        Follows internal connections from the Interface output (which
+        corresponds to the Subsystem input) and prepares any downstream
+        :class:`~pathsim.blocks.buses.BusSelector`, or recurses into
+        further nested Subsystems.
+
+        Parameters
+        ----------
+        subsystem : Subsystem
+        port : int
+            Interface output-port index (= Subsystem input port).
+        flat_layout : dict[str, int]
+        """
+        from .blocks.buses import BusSelector
+        from .subsystem import Subsystem
+
+        interface = subsystem.interface
+        for conn in subsystem.connections:
+            if conn.source.block is not interface:
+                continue
+            if port not in conn.source.ports:
+                continue
+            for target_ref in conn.targets:
+                tgt = target_ref.block
+                if isinstance(tgt, BusSelector):
+                    tgt.prepare(flat_layout)
+                elif isinstance(tgt, Subsystem):
+                    for tgt_port in target_ref.ports:
+                        self._propagate_bus_into_subsystem(
+                            tgt, tgt_port, flat_layout
+                        )
+
 
     # topological checks ----------------------------------------------------------
 

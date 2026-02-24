@@ -136,7 +136,7 @@ class PortReference:
         dst_indices = other._get_input_indices()
         src_vals = self.block.outputs._data[src_indices]
         dst_reg = other.block.inputs
-        # If any source value is a non-scalar object (e.g. a bus dict or flat bus array)
+        # If any source value is a non-scalar object (e.g. a flat bus float64 array)
         # and the destination register is float64, upgrade it in-place so the
         # reference assignment doesn't fail.
         # Plain floats/ints stored in object arrays coerce fine without upgrading.

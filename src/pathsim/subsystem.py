@@ -49,8 +49,9 @@ class Interface(Block):
     def set_inputs(self, bus_definition):
         """Mark this Interface as a bus-carrying port (no-op).
 
-        Kept for API compatibility. Bus dtype promotion is handled
-        automatically in PortReference.to().
+        Kept for API compatibility.  Bus signals now flow as pre-compiled
+        flat ``float64`` arrays whose dtype handling is automatic, so this
+        method no longer needs to do anything.
 
         Parameters
         ----------
@@ -74,12 +75,13 @@ class Interface(Block):
         port_map_out : dict[str: int]
             port alias mapping for block outputs
         """
-        self.input_port_labels = port_map_in
-        self.output_port_labels = port_map_out
+        pass
+        # self.input_port_labels = port_map_in
+        # self.output_port_labels = port_map_out
 
-        #build registers with mappings
-        self.inputs = Register(mapping=port_map_in)
-        self.outputs = Register(mapping=port_map_out)
+        # #build registers with mappings
+        # self.inputs = Register(mapping=port_map_in)
+        # self.outputs = Register(mapping=port_map_out)
 
 
 # MAIN SUBSYSTEM CLASS ==================================================================
