@@ -124,33 +124,30 @@ class PortReference:
 
 
     def to(self, other):
-        """Transfer the data between two `PortReference` instances, 
+        """Transfer the data between two `PortReference` instances,
         in this direction `self` -> `other`. From outputs to inputs.
-        
         Uses numpy fancy indexing with cached integer indices.
-
         Parameters
         ----------
         other : PortReference
             the `PortReference` instance to transfer data to from `self`
         """
-
-        # Get cached integer indices (lazy, resolved once, reused forever)
         src_indices = self._get_output_indices()
         dst_indices = other._get_input_indices()
-        
-        # Robust per-port assignment: allow dicts for dtype=object
-        src_data = self.block.outputs._data[src_indices]
-        dst_data = other.block.inputs._data
-        for i, dst_idx in enumerate(dst_indices):
-            value = src_data[i]
-            # Robust dtype check for dict assignment
-            if isinstance(value, dict):
-                if dst_data.dtype != object:
-                    raise TypeError(f"Cannot assign dict to port {dst_idx} with dtype {dst_data.dtype}. Value: {value}")
-                dst_data[dst_idx] = value
-            else:
-                dst_data[dst_idx] = value
+        src_vals = self.block.outputs._data[src_indices]
+        dst_reg = other.block.inputs
+        # If any source value is a non-scalar object (e.g. a flat bus float64 array)
+        # and the destination register is float64, upgrade it in-place so the
+        # reference assignment doesn't fail.
+        # Plain floats/ints stored in object arrays coerce fine without upgrading.
+        if (src_vals.dtype == object
+                and dst_reg._data.dtype != object
+                and len(src_vals) > 0
+                and not isinstance(src_vals[0], (int, float, np.integer, np.floating))):
+            upgraded = np.empty(len(dst_reg._data), dtype=object)
+            upgraded[:] = 0.0
+            dst_reg._data = upgraded
+        dst_reg._data[dst_indices] = src_vals
 
 
     def get_inputs(self):

@@ -1,6 +1,6 @@
 import pytest
 from pathsim.blocks.sources import Constant
-from pathsim.blocks.bus import BusCreator, BusSelector
+from pathsim.blocks.buses import BusCreator, BusSelector
 from pathsim.blocks.scope import Scope
 
 # Minimal simulation harness for block wiring
