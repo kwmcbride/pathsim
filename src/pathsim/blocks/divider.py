@@ -15,6 +15,7 @@ from math import prod
 from ._block import Block
 from ..utils.register import Register
 from ..optim.operator import Operator
+from ..utils.mutable import mutable
 
 
 # MISO BLOCKS ===========================================================================
@@ -22,6 +23,7 @@ from ..optim.operator import Operator
 _ZERO_DIV_OPTIONS = ("warn", "raise", "clamp")
 
 
+@mutable
 class Divider(Block):
     """Multiplies and divides input signals (MISO).
 
