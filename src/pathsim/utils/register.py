@@ -115,7 +115,11 @@ class Register:
         self.resize(max_idx + 1)
 
         # convert to scalar if needed to avoid numpy deprecation warning
-        if isinstance(value, np.ndarray) and value.ndim == 0:
+        # ndim==0: 0-d arrays; size==1 on float registers: e.g. randn(1) from Source lambdas
+        if isinstance(value, np.ndarray) and (
+            value.ndim == 0
+            or (value.size == 1 and self._data.dtype != object)
+        ):
             value = value.item()
 
         # Always map string keys to integer indices
