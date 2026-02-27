@@ -43,9 +43,23 @@ class Interface(Block):
     - It implements some special methods to get and set the inputs and outputs 
       of the blocks, that are used to translate between the internal blocks of the 
       subsystem and the inputs and outputs of the subsystem.
-    - Handles data transfer to and from the internal subsystem blocks 
+    - Handles data transfer to and from the internal subsystem blocks
       to and from the inputs and outputs of the subsystem.
     """
+    def set_inputs(self, bus_definition):
+        """Mark this Interface as a bus-carrying port (no-op).
+
+        Kept for API compatibility. Bus dtype promotion is handled
+        automatically in PortReference.to().
+
+        Parameters
+        ----------
+        bus_definition : Bus or any
+            Bus type definition passed by the caller — ignored.
+        """
+        pass
+
+
     def __len__(self):
         return 0
 
