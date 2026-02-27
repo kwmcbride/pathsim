@@ -1,6 +1,7 @@
 from .differentiator import *
 from .integrator import *
 from .multiplier import *
+from .divider import *
 from .converters import *
 from .comparator import *
 from .samplehold import *
@@ -20,6 +21,7 @@ from .delay import *
 from .noise import *
 from .table import *
 from .relay import *
+from .logic import *
 from .math import *
 from .ctrl import *
 from .lti import *

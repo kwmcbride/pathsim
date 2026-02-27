@@ -176,6 +176,7 @@ class Subsystem(Block):
 
         #internal graph representation -> initialized later
         self.graph = None
+        self._graph_dirty = False
 
         #internal algebraic loop solvers -> initialized later
         self.boosters = None
@@ -254,13 +255,139 @@ class Subsystem(Block):
         return other in self.blocks or other in self.connections
 
 
+    # adding and removing system components ---------------------------------------------------
+
+    def add_block(self, block):
+        """Adds a new block to the subsystem.
+
+        This works dynamically for running simulations.
+
+        Parameters
+        ----------
+        block : Block
+            block to add to the subsystem
+        """
+        if block in self.blocks:
+            raise ValueError(f"block {block} already part of subsystem")
+
+        #initialize solver if available
+        if hasattr(self, '_Solver'):
+            block.set_solver(self._Solver, self._solver_parent, **self._solver_args)
+            if block.engine:
+                self._blocks_dyn.append(block)
+
+        self.blocks.add(block)
+
+        if self.graph:
+            self._graph_dirty = True
+
+
+    def remove_block(self, block):
+        """Removes a block from the subsystem.
+
+        This works dynamically for running simulations.
+
+        Parameters
+        ----------
+        block : Block
+            block to remove from the subsystem
+        """
+        if block not in self.blocks:
+            raise ValueError(f"block {block} not part of subsystem")
+
+        self.blocks.discard(block)
+
+        #remove from dynamic list
+        if hasattr(self, '_blocks_dyn') and block in self._blocks_dyn:
+            self._blocks_dyn.remove(block)
+
+        if self.graph:
+            self._graph_dirty = True
+
+
+    def add_connection(self, connection):
+        """Adds a new connection to the subsystem.
+
+        This works dynamically for running simulations.
+
+        Parameters
+        ----------
+        connection : Connection
+            connection to add to the subsystem
+        """
+        if connection in self.connections:
+            raise ValueError(f"{connection} already part of subsystem")
+
+        self.connections.add(connection)
+
+        if self.graph:
+            self._graph_dirty = True
+
+
+    def remove_connection(self, connection):
+        """Removes a connection from the subsystem.
+
+        This works dynamically for running simulations.
+
+        Parameters
+        ----------
+        connection : Connection
+            connection to remove from the subsystem
+        """
+        if connection not in self.connections:
+            raise ValueError(f"{connection} not part of subsystem")
+
+        self.connections.discard(connection)
+
+        if self.graph:
+            self._graph_dirty = True
+
+
+    def add_event(self, event):
+        """Adds an event to the subsystem.
+
+        This works dynamically for running simulations.
+
+        Parameters
+        ----------
+        event : Event
+            event to add to the subsystem
+        """
+        if event in self._events:
+            raise ValueError(f"{event} already part of subsystem")
+
+        self._events.append(event)
+
+
+    def remove_event(self, event):
+        """Removes an event from the subsystem.
+
+        This works dynamically for running simulations.
+
+        Parameters
+        ----------
+        event : Event
+            event to remove from the subsystem
+        """
+        if event not in self._events:
+            raise ValueError(f"{event} not part of subsystem")
+
+        self._events.remove(event)
+
+
     # subsystem graph assembly --------------------------------------------------------------
 
     def _assemble_graph(self):
-        """Assemble internal graph of subsystem for fast 
+        """Assemble internal graph of subsystem for fast
         algebraic evaluation during simulation.
         """
+
+        #reset all block inputs to clear stale values from removed connections
+        for block in self.blocks:
+            block.inputs.reset()
+
         self.graph = Graph({*self.blocks, self.interface}, self.connections)
+        self._graph_dirty = False
 
         #create boosters for loop closing connections
         if self.graph.has_loops:
@@ -422,20 +549,24 @@ class Subsystem(Block):
     # methods for block output and state updates --------------------------------------------
 
     def update(self, t):
-        """Update the instant time components of the internal blocks 
+        """Update the instant time components of the internal blocks
         to evaluate the (distributed) system equation.
 
         Parameters
         ----------
         t : float
-            evaluation time 
+            evaluation time
         """
+
+        #lazy graph rebuild if dirty
+        if self._graph_dirty:
+            self._assemble_graph()
 
         #evaluate DAG
         self._dag(t)
 
         #algebraic loops -> solve them
-        if self.graph.has_loops:   
+        if self.graph.has_loops:
             self._loops(t)
 
         
@@ -606,6 +737,11 @@ class Subsystem(Block):
         solver_args : dict
             args to initialize solver with
         """
+
+        #cache solver info for dynamic block additions
+        self._Solver = Solver
+        self._solver_parent = parent
+        self._solver_args = solver_args
 
         #set integration engines and assemble list of dynamic blocks
         self._blocks_dyn = []
