@@ -1,10 +1,11 @@
 #########################################################################################
 ##
-##            PathSim example of parameter estimation using time series data
+##              PathSim example: parameter estimation from time series data
 ##
-##  Model:   y(t) = gain * t + offset  (integrator with initial value as offset)
+##  Model:   y(t) = gain * t + offset  (integrator with initial_value as offset)
 ##  Data:    Two synthetic datasets with different offsets but the same slope.
-##  Fit:     gain (global, shared) + initial_value (local, per-experiment).
+##  Fit:     gain (global, shared across experiments)
+##           initial_value (local, one per experiment)
 ##
 #########################################################################################
 
@@ -25,6 +26,8 @@ from pathsim.blocks import (
 )
 from pathsim.solvers import SSPRK22
 
+from pathsim.opt import ParameterEstimator, TimeSeriesData
+
 
 # DATA ==================================================================================
 
@@ -34,9 +37,9 @@ y_meas = np.random.uniform(0.95, 1.05, 21) * t_meas
 t_meas2 = np.linspace(0, 10, 41)
 y_meas2 = 5 + np.random.uniform(0.9, 1.1, 41) * t_meas2
 
+
 # MODEL DEFINITION ======================================================================
 
-# One simulation model ------------------------------------------------------------------
 source = Source(lambda t: 1.0)
 gain = Constant(value=0.5)
 mult = Multiplier()
@@ -44,10 +47,8 @@ integrator = Integrator()
 adder = Adder()
 scope = Scope()
 
-# (Optional) keep timeseries sources in the sim as reference/visualization signals
-# (not required for fitting, but convenient for plotting / sanity checks)
+# Optional: keep the measured signal in the sim for visual reference
 tsSource = TimeSeriesSource(t=t_meas, y=y_meas)
-# tsSource2 = TimeSeriesSource(t=t_meas2, y=y_meas2)
 
 blocks = [
     source,
@@ -57,7 +58,6 @@ blocks = [
     adder,
     scope,
     tsSource,
-    # tsSource2,
 ]
 
 connections = [
@@ -67,7 +67,6 @@ connections = [
     Connection(integrator[0], adder[0]),
     Connection(adder[0], scope[0]),
     Connection(tsSource[0], scope[1]),
-    # Connection(tsSource2[0], scope[2]),
 ]
 
 sim = Simulation(
@@ -76,8 +75,8 @@ sim = Simulation(
     Solver=SSPRK22,
     dt=0.01,
     dt_min=1e-16,
-    tolerance_lte_rel=0.0001,
-    tolerance_lte_abs=1e-08,
+    tolerance_lte_rel=1e-4,
+    tolerance_lte_abs=1e-8,
     tolerance_fpi=1e-10,
     log=False,
 )
@@ -87,63 +86,46 @@ sim = Simulation(
 
 if __name__ == '__main__':
 
-    # Parameter estimation imports
-    from pathsim.opt import ParameterEstimator, TimeSeriesData
-
-    # Trigger initial run (optional; estimator will reset+run each evaluation)
+    # Initial run (optional; the estimator resets and reruns each evaluation)
     sim.run(duration=10.0)
 
-    # create parameter estimator instance
-    est = ParameterEstimator(
-        simulator=sim,
-        adaptive=True,
-    )
+    # Create the estimator; experiment 0 is registered automatically
+    est = ParameterEstimator(simulator=sim, adaptive=True)
 
-    # Ensure experiment 1 exists as a deepcopy of experiment 0
+    # Register experiment 1 as a deep copy so both have independent state
     est.add_experiment(sim, adaptive=True, copy_sim=True)
 
-    # Global parameter (shared across experiments)
-    est.add_global_block_parameter('Constant', 'value', param_id='gain', value=3)
+    # Global parameter: shared gain across both experiments
+    est.add_global_block_parameter('Constant', 'value', param_id='gain', value=3.0)
 
-    # Local parameters (one per experiment)
-    est.add_local_block_parameter(0, 'Integrator', 'initial_value', param_id='integrator', bounds=(0.0, 5), value=0.5)
-    est.add_local_block_parameter(1, 'Integrator', 'initial_value', param_id='integrator', bounds=(0.0, 5), value=4.0)
+    # Local parameters: one initial offset per experiment
+    est.add_local_block_parameter(
+        0, 'Integrator', 'initial_value',
+        param_id='offset', value=0.5, bounds=(0.0, 5.0),
+    )
+    est.add_local_block_parameter(
+        1, 'Integrator', 'initial_value',
+        param_id='offset', value=4.0, bounds=(0.0, 5.0),
+    )
 
-    print(est.parameters)
+    # Wrap measurements; pass scope[0] from experiment 0 — the estimator
+    # resolves the matching deep-copied scope for experiment 1 automatically
+    meas  = TimeSeriesData(time=t_meas,  data=y_meas,  name="exp0")
+    meas2 = TimeSeriesData(time=t_meas2, data=y_meas2, name="exp1")
 
-    # create TimeSeriesData explicitly
-    meas = TimeSeriesData(time=t_meas, data=y_meas, name="y_meas")
-    meas2 = TimeSeriesData(time=t_meas2, data=y_meas2, name="y_meas2")
-
-    # register measurement + model output mapping (each dataset uses its own experiment)
-    # IMPORTANT: pass the scope from experiment 0; estimator resolves the corresponding
-    # deep-copied scope for other experiments automatically.
-    est.add_timeseries(meas, signal=scope[0], sigma=1.0, experiment=0)
+    est.add_timeseries(meas,  signal=scope[0], sigma=1.0, experiment=0)
     est.add_timeseries(meas2, signal=scope[0], sigma=1.0, experiment=1)
 
-    # run the fitting routine
+    # Fit
     fit = est.fit(loss='soft_l1', max_nfev=80, verbose=2)
 
-    # Display the results
     est.display()
 
-    # This will plot the fit for each experiment separately; 
-    # since we have a global parameter, the fits will be the same across experiments, 
-    # but this is just to illustrate the API. 
-    # You can also overlay them (see below).
-
-    # fig, axes = est.plot_fit(
-    #     fit.x,
-    #     title="Parameter Estimation with Global + Local Parameters",
-    #     xlabel="Time [s]",
-    #     ylabel="Output",
-    # )
-    # plt.show()
-
+    # Plot all experiments overlaid on a single axis
     fig, axes = est.plot_fit(
         fit.x,
         overlay=True,
-        title="Fit (overlayed experiments)",
+        title="Linear fit — global gain + local offsets",
         xlabel="Time [s]",
         ylabel="Output",
     )

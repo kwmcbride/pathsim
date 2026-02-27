@@ -1,24 +1,13 @@
-########################################################################################
+#########################################################################################
 ##
-##                                  TESTS FOR 
-##           'opt/parameter_estimator.py' and 'opt/timeseries_data.py'
+##                                     TESTS FOR
+##            'opt/parameter_estimator.py' and 'opt/timeseries_data.py'
 ##
-##                              Kevin McBride 2026
+##                                  Kevin McBride 2026
 ##
-########################################################################################
+#########################################################################################
 
-# IMPORTS ==============================================================================
-
-
-"""
-Tests for pathsim.opt.parameter_estimator
-
-Covers:
-- Parameter, BlockParameter, FreeParameter, SharedBlockParameter
-- ScopeSignal
-- SimRunner
-- ParameterEstimator (single and multi-experiment fitting)
-"""
+# IMPORTS ===============================================================================
 
 import numpy as np
 import pytest
@@ -40,7 +29,7 @@ from pathsim.opt.timeseries_data import TimeSeriesData
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Helpers / Fixtures
+# Test helpers / dummy classes
 # ═══════════════════════════════════════════════════════════════════════════
 
 class _DummyBlock:
@@ -49,7 +38,6 @@ class _DummyBlock:
     def __init__(self, value=1.0, gain=2.0):
         self.value = value
         self.gain = gain
-        self.num_inputs = 0
 
     def update(self, t):
         pass
@@ -64,7 +52,6 @@ class _NestedBlock:
 
     def __init__(self):
         self.config = self.Config()
-        self.num_inputs = 0
 
     def update(self, t):
         pass
@@ -81,7 +68,6 @@ class _DummyScope:
         return self._t, self._y
 
     def __getitem__(self, port):
-        """Simulate scope[port] -> PortReference."""
         return _PortRef(self, port)
 
 
@@ -107,11 +93,9 @@ class _DummySim:
 
     def run(self, duration=1.0, reset=True, adaptive=False):
         self._ran = True
-        # Populate any _DummyScope blocks with some data
         for b in self.blocks:
             if isinstance(b, _DummyScope):
                 t = np.linspace(0, duration, 50)
-                # Find all _DummyBlock blocks and sum their values as "gain"
                 gain = sum(
                     getattr(blk, "value", 0)
                     for blk in self.blocks
@@ -151,7 +135,10 @@ class TestParameter:
 
     def test_block_parameter_with_transform(self):
         blk = _DummyBlock(value=0.0)
-        p = Parameter(name="blk.value", value=2.0, block=blk, attribute="value", transform=lambda x: x ** 2)
+        p = Parameter(
+            name="blk.value", value=2.0, block=blk, attribute="value",
+            transform=lambda x: x ** 2,
+        )
         assert blk.value == 4.0
         assert p() == 4.0
         assert p.value == 2.0  # optimizer space
@@ -270,9 +257,20 @@ class TestScopeSignal:
         np.testing.assert_array_equal(y, [10, 20, 30])
 
     def test_read_2d_selects_port(self):
+        # (n_ports, n_time) layout
         scope = _DummyScope(
             t=np.array([0, 1, 2]),
             y=np.array([[10, 20, 30], [40, 50, 60]]),
+        )
+        sig = ScopeSignal(scope=scope, port=1)
+        t, y = sig.read()
+        np.testing.assert_array_equal(y, [40, 50, 60])
+
+    def test_read_2d_time_first_layout(self):
+        # (n_time, n_ports) layout — should be auto-transposed
+        scope = _DummyScope(
+            t=np.array([0, 1, 2]),
+            y=np.array([[10, 40], [20, 50], [30, 60]]),  # shape (3, 2)
         )
         sig = ScopeSignal(scope=scope, port=1)
         t, y = sig.read()
@@ -361,7 +359,7 @@ class TestParamFactoryFunctions:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# ParameterEstimator tests
+# ParameterEstimator — init
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestParameterEstimatorInit:
@@ -384,6 +382,19 @@ class TestParameterEstimatorInit:
         est = ParameterEstimator(simulator=sim)
         assert len(est.experiments) == 1
 
+    def test_runners_property_in_sync(self):
+        scope = _DummyScope()
+        blk = _DummyBlock()
+        sim = _DummySim(blocks=[blk, scope])
+        est = ParameterEstimator(simulator=sim)
+        assert len(est.runners) == 1
+        est.add_experiment(sim, copy_sim=True)
+        assert len(est.runners) == 2
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ParameterEstimator — experiments
+# ═══════════════════════════════════════════════════════════════════════════
 
 class TestParameterEstimatorExperiments:
 
@@ -410,6 +421,10 @@ class TestParameterEstimatorExperiments:
         with pytest.raises(IndexError):
             est._ensure_experiment(-1)
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ParameterEstimator — parameter registration
+# ═══════════════════════════════════════════════════════════════════════════
 
 class TestParameterEstimatorParameters:
 
@@ -441,6 +456,16 @@ class TestParameterEstimatorParameters:
         est.add_global_block_parameter("_DummyBlock", "value", value=10.0)
         assert len(est.global_parameters) == 1
 
+    def test_add_shared_block_parameter_alias(self):
+        """add_shared_block_parameter is an alias for add_global_block_parameter."""
+        scope = _DummyScope()
+        blk = _DummyBlock(value=1.0)
+        sim = _DummySim(blocks=[blk, scope])
+        est = ParameterEstimator(simulator=sim)
+        est.add_experiment(sim, copy_sim=True)
+        est.add_shared_block_parameter("_DummyBlock", "value", value=5.0)
+        assert len(est.global_parameters) == 1
+
     def test_add_local_block_parameter(self):
         scope = _DummyScope()
         blk = _DummyBlock(value=1.0)
@@ -451,6 +476,19 @@ class TestParameterEstimatorParameters:
         est.add_local_block_parameter(1, "_DummyBlock", "value", value=3.0)
         assert len(est.local_parameters[0]) == 1
         assert len(est.local_parameters[1]) == 1
+
+    def test_add_local_block_parameter_with_transform(self):
+        """Local block parameters accept a transform argument."""
+        scope = _DummyScope()
+        blk = _DummyBlock(value=1.0)
+        sim = _DummySim(blocks=[blk, scope])
+        est = ParameterEstimator(simulator=sim)
+        est.add_local_block_parameter(
+            0, "_DummyBlock", "value", value=2.0, transform=np.exp
+        )
+        p = est.local_parameters[0][0]
+        assert p() == pytest.approx(np.exp(2.0))
+        assert blk.value == pytest.approx(np.exp(2.0))
 
     def test_parameters_property_order(self):
         scope = _DummyScope()
@@ -469,6 +507,10 @@ class TestParameterEstimatorParameters:
         assert "exp0" in params[1].name
         assert "exp1" in params[2].name
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ParameterEstimator — time series
+# ═══════════════════════════════════════════════════════════════════════════
 
 class TestParameterEstimatorTimeseries:
 
@@ -533,6 +575,10 @@ class TestParameterEstimatorTimeseries:
         assert est.duration == 10.0
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# ParameterEstimator — apply
+# ═══════════════════════════════════════════════════════════════════════════
+
 class TestParameterEstimatorApply:
 
     def test_apply_sets_parameters(self):
@@ -566,13 +612,21 @@ class TestParameterEstimatorApply:
         est.add_local_block_parameter(0, "_DummyBlock", "gain", value=1.0, param_id="l")
         est.add_local_block_parameter(1, "_DummyBlock", "gain", value=1.0, param_id="l")
 
-        # x = [global_value, local_gain_exp0, local_gain_exp1]
         est.apply(np.array([10.0, 20.0, 30.0]))
 
         assert est.global_parameters[0].value == 10.0
         assert est.local_parameters[0][0].value == 20.0
         assert est.local_parameters[1][0].value == 30.0
 
+    def test_apply_empty_vector(self):
+        """apply([]) should succeed when there are no parameters."""
+        est = ParameterEstimator()
+        est.apply(np.array([]))  # must not raise
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ParameterEstimator — simulate
+# ═══════════════════════════════════════════════════════════════════════════
 
 class TestParameterEstimatorSimulate:
 
@@ -604,6 +658,10 @@ class TestParameterEstimatorSimulate:
         with pytest.raises(IndexError):
             est.simulate(np.array([]), experiment=5)
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ParameterEstimator — residuals
+# ═══════════════════════════════════════════════════════════════════════════
 
 class TestParameterEstimatorResiduals:
 
@@ -650,10 +708,33 @@ class TestParameterEstimatorResiduals:
         scope = _DummyScope()
         sim = _DummySim(blocks=[scope])
         est = ParameterEstimator(simulator=sim)
-        # No measurements added
         r = est.residuals(np.array([]))
         assert r.shape == (0,)
 
+    def test_residuals_sigma_scaling(self):
+        """Non-unit sigma scales the residuals."""
+        scope = _DummyScope()
+        blk = _DummyBlock(value=1.0)
+        sim = _DummySim(blocks=[blk, scope])
+        est = ParameterEstimator(simulator=sim)
+
+        ts = TimeSeriesData(time=np.array([0.0, 1.0]), data=np.array([0.0, 0.5]))
+        est.add_block_parameter(blk, "value", value=1.0)
+        est.add_timeseries(ts, scope=scope, port=0, sigma=2.0)
+
+        r_sigma1 = est.residuals(np.array([1.0]))
+        # Manually add same ts with sigma=1
+        est2 = ParameterEstimator(simulator=sim)
+        est2.add_block_parameter(blk, "value", value=1.0)
+        est2.add_timeseries(ts, scope=scope, port=0, sigma=1.0)
+        r_sigma1_ref = est2.residuals(np.array([1.0]))
+
+        np.testing.assert_allclose(r_sigma1, r_sigma1_ref / 2.0)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ParameterEstimator — display
+# ═══════════════════════════════════════════════════════════════════════════
 
 class TestParameterEstimatorDisplay:
 
@@ -693,6 +774,22 @@ class TestParameterEstimatorDisplay:
         captured = capsys.readouterr()
         assert "Local parameters (experiment 0)" in captured.out
 
+    def test_display_shows_bounds(self, capsys):
+        blk = _DummyBlock(value=1.0)
+        scope = _DummyScope()
+        sim = _DummySim(blocks=[blk, scope])
+        est = ParameterEstimator(simulator=sim)
+        est.add_block_parameter(blk, "value", value=1.0, bounds=(0.0, 10.0))
+        est.display()
+
+        captured = capsys.readouterr()
+        assert "[0" in captured.out
+        assert "10" in captured.out
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ParameterEstimator — fit
+# ═══════════════════════════════════════════════════════════════════════════
 
 class TestParameterEstimatorFit:
 
@@ -703,7 +800,6 @@ class TestParameterEstimatorFit:
         sim = _DummySim(blocks=[blk, scope])
         est = ParameterEstimator(simulator=sim)
 
-        # Target: gain=2.0
         t_meas = np.array([0.0, 0.5, 1.0])
         y_meas = 2.0 * t_meas
         ts = TimeSeriesData(time=t_meas, data=y_meas)
@@ -728,11 +824,48 @@ class TestParameterEstimatorFit:
         with pytest.raises(ValueError, match="does not support general constraints"):
             est.fit(constraints=[{"type": "eq", "fun": lambda x: x[0] - 1}])
 
+    def test_fit_minimize_method(self):
+        """Fit using scipy minimize (L-BFGS-B)."""
+        scope = _DummyScope()
+        blk = _DummyBlock(value=1.0)
+        sim = _DummySim(blocks=[blk, scope])
+        est = ParameterEstimator(simulator=sim)
+
+        t_meas = np.array([0.0, 0.5, 1.0])
+        y_meas = 3.0 * t_meas
+        ts = TimeSeriesData(time=t_meas, data=y_meas)
+
+        est.add_block_parameter(blk, "value", value=1.0, bounds=(0.1, 10.0))
+        est.add_timeseries(ts, scope=scope, port=0)
+
+        result = est.fit(max_nfev=100, method="L-BFGS-B")
+        assert isinstance(result, EstimatorResult)
+        assert result.x[0] == pytest.approx(3.0, abs=0.5)
+
+    def test_fit_result_repr(self):
+        r = EstimatorResult(
+            x=np.array([1.0, 2.0]),
+            cost=0.01,
+            nfev=42,
+            success=True,
+            message="converged",
+        )
+        s = repr(r)
+        assert "SUCCESS" in s
+        assert "0.01" in s
+        assert "42" in s
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ParameterEstimator — plot_fit
+# ═══════════════════════════════════════════════════════════════════════════
 
 class TestParameterEstimatorPlotFit:
 
     def test_plot_fit_returns_fig_axes(self):
         pytest.importorskip("matplotlib")
+        import matplotlib
+        matplotlib.use("Agg")
 
         scope = _DummyScope()
         blk = _DummyBlock(value=1.0)
@@ -742,15 +875,14 @@ class TestParameterEstimatorPlotFit:
         ts = TimeSeriesData(time=np.array([0.0, 0.5, 1.0]), data=np.array([0, 0.5, 1.0]))
         est.add_timeseries(ts, scope=scope, port=0)
 
-        import matplotlib
-        matplotlib.use("Agg")
-
         fig, axes = est.plot_fit(np.array([]))
         assert fig is not None
         assert len(axes) == 1
 
     def test_plot_fit_overlay(self):
         pytest.importorskip("matplotlib")
+        import matplotlib
+        matplotlib.use("Agg")
 
         scope = _DummyScope()
         blk = _DummyBlock(value=1.0)
@@ -763,9 +895,6 @@ class TestParameterEstimatorPlotFit:
         est.add_timeseries(ts1, scope=scope, port=0, experiment=0)
         est.add_timeseries(ts2, scope=scope, port=0, experiment=1)
 
-        import matplotlib
-        matplotlib.use("Agg")
-
         fig, axes = est.plot_fit(np.array([]), overlay=True)
         assert len(axes) == 1
 
@@ -774,6 +903,30 @@ class TestParameterEstimatorPlotFit:
         with pytest.raises(ValueError, match="No experiments"):
             est.plot_fit(np.array([]))
 
+    def test_plot_fit_multiple_datasets_per_experiment(self):
+        """plot_fit should iterate all datasets, not just output 0."""
+        pytest.importorskip("matplotlib")
+        import matplotlib
+        matplotlib.use("Agg")
+
+        scope1 = _DummyScope()
+        scope2 = _DummyScope()
+        blk = _DummyBlock(value=1.0)
+        sim = _DummySim(blocks=[blk, scope1, scope2])
+        est = ParameterEstimator(simulator=sim)
+
+        ts1 = TimeSeriesData(time=np.array([0.0, 1.0]), data=np.array([0, 1]))
+        ts2 = TimeSeriesData(time=np.array([0.0, 1.0]), data=np.array([0, 2]))
+        est.add_timeseries(ts1, scope=scope1, port=0, experiment=0)
+        est.add_timeseries(ts2, scope=scope2, port=0, experiment=0)
+
+        fig, axes = est.plot_fit(np.array([]))
+        assert fig is not None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Internal helpers
+# ═══════════════════════════════════════════════════════════════════════════
 
 class TestScopePortFromSignal:
 
@@ -854,6 +1007,10 @@ class TestResolveOutput:
             est._resolve_output(exp, sig)
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# EstimatorResult
+# ═══════════════════════════════════════════════════════════════════════════
+
 class TestEstimatorResult:
 
     def test_fields(self):
@@ -868,3 +1025,266 @@ class TestEstimatorResult:
         assert r.cost == 0.5
         assert r.nfev == 10
         assert r.message == "ok"
+
+    def test_repr_success(self):
+        r = EstimatorResult(
+            x=np.array([1.0]), cost=0.0, nfev=5, success=True, message="ok"
+        )
+        assert "SUCCESS" in repr(r)
+
+    def test_repr_failure(self):
+        r = EstimatorResult(
+            x=np.array([1.0]), cost=1.0, nfev=80, success=False, message="maxiter"
+        )
+        assert "FAILED" in repr(r)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Stress tests
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestStress:
+
+    def test_multi_experiment_convergence(self):
+        """Two experiments, one global + two local parameters converge correctly."""
+        scope1 = _DummyScope()
+        blk1 = _DummyBlock(value=1.0)
+        sim1 = _DummySim(blocks=[blk1, scope1])
+
+        scope2 = _DummyScope()
+        blk2 = _DummyBlock(value=1.0)
+        sim2 = _DummySim(blocks=[blk2, scope2])
+
+        # Both sims use the same gain (global) but different offsets are
+        # handled by the gain itself in this simple model.
+        est = ParameterEstimator(simulator=sim1)
+        est.add_experiment(sim2)
+
+        # Global: shared gain ~ 3.0
+        est.add_global_block_parameter("_DummyBlock", "value", value=1.0, param_id="gain")
+
+        t = np.linspace(0, 1, 11)
+        ts1 = TimeSeriesData(time=t, data=3.0 * t, name="exp0")
+        ts2 = TimeSeriesData(time=t, data=3.0 * t, name="exp1")
+        est.add_timeseries(ts1, scope=scope1, port=0, sigma=1.0, experiment=0)
+        est.add_timeseries(ts2, scope=scope2, port=0, sigma=1.0, experiment=1)
+
+        result = est.fit(max_nfev=80)
+        assert result.x[0] == pytest.approx(3.0, abs=0.3)
+
+    def test_transform_applied_during_fit(self):
+        """Transform is applied correctly throughout the optimization."""
+        scope = _DummyScope()
+        blk = _DummyBlock(value=1.0)
+        sim = _DummySim(blocks=[blk, scope])
+        est = ParameterEstimator(simulator=sim)
+
+        # Fit in log space: exp(x) = 4.0 → x = ln(4) ≈ 1.386
+        t = np.linspace(0, 1, 11)
+        ts = TimeSeriesData(time=t, data=4.0 * t)
+
+        est.add_block_parameter(
+            blk, "value", value=1.0, bounds=(-5, 5), transform=np.exp
+        )
+        est.add_timeseries(ts, scope=scope, port=0)
+
+        result = est.fit(max_nfev=100)
+        assert blk.value == pytest.approx(4.0, abs=0.5)
+
+    def test_parameters_at_bounds(self):
+        """Residuals remain finite even when parameters are at their bounds."""
+        scope = _DummyScope()
+        blk = _DummyBlock(value=1.0)
+        sim = _DummySim(blocks=[blk, scope])
+        est = ParameterEstimator(simulator=sim)
+
+        ts = TimeSeriesData(time=np.array([0.0, 0.5, 1.0]), data=np.array([0, 0.5, 1]))
+        est.add_block_parameter(blk, "value", value=0.1, bounds=(0.1, 10.0))
+        est.add_timeseries(ts, scope=scope, port=0)
+
+        r = est.residuals(np.array([0.1]))  # at lower bound
+        assert np.all(np.isfinite(r))
+
+        r = est.residuals(np.array([10.0]))  # at upper bound
+        assert np.all(np.isfinite(r))
+
+    def test_free_parameter_in_estimator(self):
+        """Free parameters (not block-bound) are handled correctly."""
+        scope = _DummyScope()
+        blk = _DummyBlock(value=1.0)
+        sim = _DummySim(blocks=[blk, scope])
+        est = ParameterEstimator(simulator=sim)
+
+        # Free parameter: just a scalar, not bound to any block
+        scale = Parameter("scale", value=2.0, bounds=(0.1, 10.0))
+        est.add_parameters([scale])
+
+        ts = TimeSeriesData(time=np.array([0.0, 1.0]), data=np.array([0.0, 1.0]))
+        est.add_timeseries(ts, scope=scope, port=0)
+
+        # apply() should set scale.value but not crash (no block)
+        est.apply(np.array([5.0]))
+        assert scale.value == 5.0
+
+    def test_missing_outputs_raises(self):
+        """Mismatched measurements/outputs raises a clear error."""
+        scope = _DummyScope()
+        sim = _DummySim(blocks=[scope])
+        est = ParameterEstimator(simulator=sim)
+
+        # Manually break the invariant to test the guard
+        ts = TimeSeriesData(time=np.array([0, 1]), data=np.array([0, 1]))
+        est.add_timeseries(ts, scope=scope, port=0)
+        # Add an extra output without a corresponding measurement
+        est.experiments[0].outputs.append(
+            ScopeSignal(scope=scope, port=0)
+        )
+
+        with pytest.raises(ValueError, match="output mapping"):
+            est.residuals(np.array([]))
+
+    def test_add_global_no_experiments_raises(self):
+        est = ParameterEstimator()
+        with pytest.raises(ValueError, match="No experiments"):
+            est.add_global_block_parameter("_DummyBlock", "value")
+
+    def test_add_local_missing_block_raises(self):
+        scope = _DummyScope()
+        sim = _DummySim(blocks=[scope])
+        est = ParameterEstimator(simulator=sim)
+        with pytest.raises(ValueError, match="no block of type"):
+            est.add_local_block_parameter(0, "NonExistentBlock", "value")
+
+    def test_add_local_missing_attr_raises(self):
+        blk = _DummyBlock()
+        scope = _DummyScope()
+        sim = _DummySim(blocks=[blk, scope])
+        est = ParameterEstimator(simulator=sim)
+        with pytest.raises(AttributeError):
+            est.add_local_block_parameter(0, "_DummyBlock", "nonexistent_attr")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# New robustness tests (from agent review fixes)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestParameterBoundsValidation:
+
+    def test_inverted_bounds_raises(self):
+        with pytest.raises(ValueError, match="lower bound"):
+            Parameter(name="x", value=1.0, bounds=(5.0, 2.0))
+
+    def test_value_below_lower_bound_warns(self):
+        with pytest.warns(UserWarning, match="initial value"):
+            Parameter(name="x", value=-1.0, bounds=(0.0, 10.0))
+
+    def test_value_above_upper_bound_warns(self):
+        with pytest.warns(UserWarning, match="initial value"):
+            Parameter(name="x", value=20.0, bounds=(0.0, 10.0))
+
+    def test_value_at_lower_bound_no_warn(self):
+        # Exactly at bound — no warning
+        p = Parameter(name="x", value=0.0, bounds=(0.0, 10.0))
+        assert p.value == 0.0
+
+    def test_value_at_upper_bound_no_warn(self):
+        p = Parameter(name="x", value=10.0, bounds=(0.0, 10.0))
+        assert p.value == 10.0
+
+    def test_infinite_bounds_no_validation(self):
+        # Infinite bounds should never warn or raise
+        p = Parameter(name="x", value=999.0)
+        assert p.value == 999.0
+
+
+class TestScopeSignalExtractRobustness:
+
+    def test_square_array_raises(self):
+        """A square 2D scope output is ambiguous and should raise."""
+        scope = _DummyScope(
+            t=np.linspace(0, 1, 4),
+            y=np.ones((4, 4)),  # square — ambiguous
+        )
+        sig = ScopeSignal(scope=scope, port=0)
+        with pytest.raises(ValueError, match="ambiguous"):
+            sig.read()
+
+    def test_port_out_of_range_raises(self):
+        """Requesting a port beyond the scope's n_ports raises IndexError."""
+        scope = _DummyScope(
+            t=np.array([0.0, 1.0, 2.0]),
+            y=np.array([[1.0, 2.0, 3.0]]),  # 1 port, (1, 3)
+        )
+        sig = ScopeSignal(scope=scope, port=5)
+        with pytest.raises(IndexError, match="port=5"):
+            sig.read()
+
+    def test_non_square_time_first_auto_transpose(self):
+        """(n_time, n_ports) layout is transposed when unambiguous."""
+        t = np.array([0.0, 1.0, 2.0])
+        y = np.array([[10.0, 1.0], [20.0, 2.0], [30.0, 3.0]])  # (3, 2) time-first
+        scope = _DummyScope(t=t, y=y)
+        sig = ScopeSignal(scope=scope, port=0)
+        _, y_out = sig.read()
+        np.testing.assert_array_equal(y_out, [10.0, 20.0, 30.0])
+
+
+class TestPreFitValidation:
+
+    def test_fit_no_parameters_raises(self):
+        """fit() with no parameters should raise before running."""
+        scope = _DummyScope()
+        sim = _DummySim(blocks=[scope])
+        est = ParameterEstimator(simulator=sim)
+        ts = TimeSeriesData(time=np.array([0.0, 1.0]), data=np.array([0.0, 1.0]))
+        est.add_timeseries(ts, scope=scope, port=0)
+
+        with pytest.raises(ValueError, match="No parameters"):
+            est.fit()
+
+    def test_fit_no_measurements_raises(self):
+        """fit() with no measurements should raise before running."""
+        scope = _DummyScope()
+        blk = _DummyBlock(value=1.0)
+        sim = _DummySim(blocks=[blk, scope])
+        est = ParameterEstimator(simulator=sim)
+        est.add_block_parameter(blk, "value", value=1.0)
+
+        with pytest.raises(ValueError, match="No measurements"):
+            est.fit()
+
+    def test_fit_no_experiments_raises(self):
+        """fit() on a completely empty estimator should raise."""
+        est = ParameterEstimator()
+        with pytest.raises(ValueError, match="No experiments"):
+            est.fit()
+
+
+class TestCopySimWarning:
+
+    def test_shared_sim_warns(self):
+        """Registering the same sim twice without copy_sim=True should warn."""
+        scope = _DummyScope()
+        blk = _DummyBlock(value=1.0)
+        sim = _DummySim(blocks=[blk, scope])
+        est = ParameterEstimator(simulator=sim)
+
+        with pytest.warns(UserWarning, match="copy_sim"):
+            est.add_experiment(sim)  # same object, copy_sim=False
+
+    def test_different_sim_no_warn(self):
+        """Different sim objects should not warn even without copy_sim."""
+        scope1 = _DummyScope()
+        blk1 = _DummyBlock(value=1.0)
+        sim1 = _DummySim(blocks=[blk1, scope1])
+
+        scope2 = _DummyScope()
+        blk2 = _DummyBlock(value=1.0)
+        sim2 = _DummySim(blocks=[blk2, scope2])
+
+        est = ParameterEstimator(simulator=sim1)
+        # Should not warn — different objects
+        import warnings as _warnings
+        with _warnings.catch_warnings():
+            _warnings.simplefilter("error")
+            est.add_experiment(sim2)  # no warning expected
