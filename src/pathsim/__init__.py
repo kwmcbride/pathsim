@@ -10,3 +10,4 @@ from .connection import Connection, Duplex
 from .bus import Bus, BusElement
 from .subsystem import Subsystem, Interface
 from .utils.logger import LoggerManager
+from .bus import Bus, BusElement
