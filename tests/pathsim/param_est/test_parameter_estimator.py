@@ -1441,3 +1441,215 @@ class TestTimeSeriesDataPlot:
         )
         returned = ts.plot(ax=ax)
         assert returned is ax
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SharedBlockParameter — composition-safe init
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestSharedBlockParameterInit:
+
+    def test_init_sets_all_targets(self):
+        blk1 = _DummyBlock(value=0.0)
+        blk2 = _DummyBlock(value=0.0)
+        p = SharedBlockParameter("g", [blk1, blk2], "value", value=3.0)
+        assert blk1.value == 3.0
+        assert blk2.value == 3.0
+        assert p.value == 3.0
+
+    def test_init_order_independent(self):
+        """set() is only called after self.targets is ready — no AttributeError."""
+        blk1 = _DummyBlock(value=0.0)
+        blk2 = _DummyBlock(value=0.0)
+        # This would fail with the old super().__init__() ordering if targets
+        # was not assigned before set() was dispatched.
+        p = SharedBlockParameter("g", [blk1, blk2], "value", value=5.0)
+        assert p() == 5.0
+
+    def test_inverted_bounds_raises(self):
+        blk = _DummyBlock()
+        with pytest.raises(ValueError, match="lower bound"):
+            SharedBlockParameter("g", [blk], "value", bounds=(5.0, 1.0))
+
+    def test_value_out_of_bounds_warns(self):
+        blk = _DummyBlock()
+        with pytest.warns(UserWarning, match="initial value"):
+            SharedBlockParameter("g", [blk], "value", value=20.0, bounds=(0, 10))
+
+    def test_is_block_parameter(self):
+        blk = _DummyBlock()
+        p = SharedBlockParameter("g", [blk], "value", value=1.0)
+        assert p.is_block_parameter
+        assert not p.is_free_parameter
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Constructor defaults forwarding in add_experiment()
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestConstructorDefaultsForwarding:
+
+    def test_adaptive_inherited_by_add_experiment(self):
+        """add_experiment() without explicit adaptive= inherits the constructor value."""
+        scope = _DummyScope()
+        blk = _DummyBlock(value=1.0)
+        sim = _DummySim(blocks=[blk, scope])
+        est = ParameterEstimator(simulator=sim, adaptive=True)
+        est.add_experiment(sim, copy_sim=True)
+
+        # Both runners should have adaptive=True
+        for runner in est.runners:
+            assert runner.adaptive is True
+
+    def test_explicit_adaptive_overrides_default(self):
+        """Explicitly passing adaptive=False overrides the constructor default."""
+        scope = _DummyScope()
+        blk = _DummyBlock(value=1.0)
+        sim = _DummySim(blocks=[blk, scope])
+        est = ParameterEstimator(simulator=sim, adaptive=True)
+        est.add_experiment(sim, copy_sim=True, adaptive=False)
+
+        assert est.runners[0].adaptive is True   # constructor default
+        assert est.runners[1].adaptive is False  # explicit override
+
+    def test_pre_run_inherited(self):
+        """pre_run callable is inherited by subsequent add_experiment() calls."""
+        hook_log = []
+        scope = _DummyScope()
+        blk = _DummyBlock(value=1.0)
+        sim = _DummySim(blocks=[blk, scope])
+
+        hook = lambda: hook_log.append("ran")
+        est = ParameterEstimator(simulator=sim, pre_run=hook)
+        est.add_experiment(sim, copy_sim=True)
+
+        # Both runners should have the same hook
+        assert est.runners[0].pre_run is hook
+        assert est.runners[1].pre_run is hook
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Deferred duration update
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestDeferredDurationUpdate:
+
+    def test_duration_updated_before_fit(self):
+        """Runner duration is correct by the time fit() evaluates residuals."""
+        scope = _DummyScope()
+        blk = _DummyBlock(value=1.0)
+        sim = _DummySim(blocks=[blk, scope])
+        est = ParameterEstimator(simulator=sim)
+
+        ts = TimeSeriesData(time=np.array([0.0, 5.0, 10.0]), data=np.array([0, 5, 10]))
+        est.add_block_parameter(blk, "value", value=1.0)
+        est.add_timeseries(ts, scope=scope, port=0)
+
+        # Duration should be stale (dirty) until residuals/fit forces update
+        assert est._duration_dirty
+
+        est.residuals(np.array([1.0]))
+
+        # After residuals(), duration should be current
+        assert not est._duration_dirty
+        assert est.runners[0].duration == pytest.approx(10.0)
+
+    def test_duration_not_updated_without_measurements(self):
+        """_duration_dirty stays False if no measurements have been added yet."""
+        scope = _DummyScope()
+        sim = _DummySim(blocks=[scope])
+        est = ParameterEstimator(simulator=sim)
+        # No measurements — dirty should be True (experiment was added)
+        assert est._duration_dirty
+        est._ensure_duration_current()
+        assert not est._duration_dirty   # resolved: no measurements → duration stays 0
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Constraint-based fitting (minimize path)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestConstraintFitting:
+
+    def _make_est(self, target_gain=2.0):
+        scope = _DummyScope()
+        blk = _DummyBlock(value=1.0)
+        sim = _DummySim(blocks=[blk, scope])
+        est = ParameterEstimator(simulator=sim)
+        t = np.linspace(0, 1, 11)
+        ts = TimeSeriesData(time=t, data=target_gain * t)
+        est.add_block_parameter(blk, "value", value=1.0, bounds=(0.1, 10.0))
+        est.add_timeseries(ts, scope=scope, port=0)
+        return est, blk
+
+    def test_slsqp_unconstrained(self):
+        est, blk = self._make_est(target_gain=2.0)
+        result = est.fit(method="SLSQP", max_nfev=100)
+        assert isinstance(result, EstimatorResult)
+        assert result.x[0] == pytest.approx(2.0, abs=0.3)
+
+    def test_slsqp_with_inequality_constraint(self):
+        """SLSQP respects an inequality constraint that clips the optimal value."""
+        est, blk = self._make_est(target_gain=2.0)
+        # Constrain gain >= 2.5 — optimizer should land at ~2.5, not 2.0
+        constraints = [{"type": "ineq", "fun": lambda x: x[0] - 2.5}]
+        result = est.fit(method="SLSQP", max_nfev=100, constraints=constraints)
+        assert result.x[0] >= 2.5 - 1e-4
+
+    def test_constraints_rejected_for_least_squares(self):
+        est, _ = self._make_est()
+        with pytest.raises(ValueError, match="does not support general constraints"):
+            est.fit(constraints=[{"type": "eq", "fun": lambda x: x[0] - 1}])
+
+    def test_cobyla_unconstrained(self):
+        est, blk = self._make_est(target_gain=3.0)
+        result = est.fit(method="COBYLA", max_nfev=200)
+        assert isinstance(result, EstimatorResult)
+
+    def test_constraint_method_on_unsupported_method_raises(self):
+        est, _ = self._make_est()
+        with pytest.raises(ValueError, match="does not support general constraints"):
+            est.fit(method="L-BFGS-B",
+                    constraints=[{"type": "ineq", "fun": lambda x: x[0]}])
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Multi-experiment scope resolution (structural assumption documented)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestScopeResolution:
+
+    def test_same_structure_resolves_correctly(self):
+        """Deep-copied sims with identical block order resolve to the right scope."""
+        s1 = _DummyScope()
+        blk = _DummyBlock(value=1.0)
+        sim = _DummySim(blocks=[blk, s1])
+        est = ParameterEstimator(simulator=sim)
+        est.add_experiment(sim, copy_sim=True)
+
+        ts = TimeSeriesData(time=np.array([0.0, 1.0]), data=np.array([0, 1]))
+        est.add_global_block_parameter("_DummyBlock", "value", value=1.0)
+        est.add_timeseries(ts, signal=s1[0], sigma=1.0, experiment=0)
+        est.add_timeseries(ts, signal=s1[0], sigma=1.0, experiment=1)
+
+        # Both experiments should resolve scopes without error
+        r = est.residuals(np.array([1.0]))
+        assert r.shape == (4,)   # 2 points × 2 experiments
+
+    def test_scope_not_in_sim_raises(self):
+        """Resolving a scope that doesn't exist in the experiment sim raises."""
+        s_external = _DummyScope()   # not in any sim
+        blk = _DummyBlock(value=1.0)
+        sim = _DummySim(blocks=[blk, _DummyScope()])
+        est = ParameterEstimator(simulator=sim)
+
+        ts = TimeSeriesData(time=np.array([0.0, 1.0]), data=np.array([0, 1]))
+        est.add_block_parameter(blk, "value", value=1.0)
+        # Force a direct scope reference (not resolved via occurrence)
+        sig = ScopeSignal(scope=None, port=0, block_type="_DummyScope", occurrence=99)
+        est.experiments[0].measurements.append(ts)
+        est.experiments[0].outputs.append(sig)
+        est.experiments[0].sigma.append(1.0)
+
+        with pytest.raises(ValueError, match="No block"):
+            est.residuals(np.array([1.0]))

@@ -22,6 +22,9 @@ import scipy.optimize as sci_opt
 from ..blocks._block import Block
 from .timeseries_data import TimeSeriesData
 
+# Sentinel for "argument not provided" — distinguishes None from unset
+_UNSET = object()
+
 __all__ = [
     "Parameter",
     "BlockParameter",
@@ -238,8 +241,10 @@ class SharedBlockParameter(Parameter):
 
     Notes
     -----
-    ``block`` is set to ``targets[0]`` to preserve repr / debug output from
-    the parent class.
+    Initialisation bypasses ``Parameter.__init__`` to avoid the fragile
+    ordering constraint that ``self.targets`` must exist before ``set()`` is
+    dispatched.  All parent attributes are initialised explicitly so the full
+    ``Parameter`` interface is preserved.
     """
 
     def __init__(
@@ -253,15 +258,39 @@ class SharedBlockParameter(Parameter):
     ):
         if not targets:
             raise ValueError("targets must be a non-empty list")
+
+        lo, hi = bounds
+        if np.isfinite(lo) and np.isfinite(hi) and lo > hi:
+            raise ValueError(
+                f"SharedBlockParameter '{name}': lower bound {lo} > upper bound {hi}"
+            )
+
+        # Initialise all Parameter attributes directly — do NOT call
+        # super().__init__() because it would dispatch to our set() before
+        # self.targets is assigned, causing an AttributeError.
+        self.name = name
+        self._value = 0.0          # placeholder; real value written by set() below
+        self.bounds = bounds
+        self.transform = transform
+        self.block = targets[0]    # kept for repr / debug parity with Parameter
+        self.attribute = attribute
+        self._is_block_param = True
         self.targets = targets
-        super().__init__(
-            name=name,
-            value=value,
-            bounds=bounds,
-            transform=transform,
-            block=targets[0],
-            attribute=attribute,
-        )
+
+        if np.isfinite(lo) and float(value) < lo:
+            warnings.warn(
+                f"SharedBlockParameter '{name}': initial value {value} < lower bound {lo}",
+                UserWarning,
+                stacklevel=2,
+            )
+        if np.isfinite(hi) and float(value) > hi:
+            warnings.warn(
+                f"SharedBlockParameter '{name}': initial value {value} > upper bound {hi}",
+                UserWarning,
+                stacklevel=2,
+            )
+
+        self.set(value)
 
 
     def set(self, value: float) -> None:
@@ -520,8 +549,48 @@ class ParameterEstimator:
         measurement time extent when measurements are added.
     adaptive : bool
         Enable adaptive stepping in the default experiment runner.
+        Inherited by subsequent :meth:`add_experiment` calls unless overridden.
     pre_run : callable, optional
         Hook executed before each sim run in the default experiment.
+        Inherited by subsequent :meth:`add_experiment` calls unless overridden.
+
+    Notes
+    -----
+    **Common usage patterns**
+
+    *Pattern 1 — Single experiment, block-bound parameters:*
+
+    .. code-block:: python
+
+        est = ParameterEstimator(simulator=sim, adaptive=True)
+        est.add_block_parameter(amp, "gain", value=1.0, bounds=(0, 10))
+        est.add_timeseries(meas, signal=scope[0], sigma=1.0)
+        result = est.fit()
+        est.display()
+
+    *Pattern 2 — Multi-experiment with a shared (global) parameter:*
+
+    .. code-block:: python
+
+        est = ParameterEstimator(simulator=sim, adaptive=True)
+        est.add_experiment(sim, copy_sim=True)   # independent copy for exp 1
+        est.add_global_block_parameter("Gain", "value", value=1.0, bounds=(0, 10))
+        est.add_timeseries(meas0, signal=scope[0], sigma=1.0, experiment=0)
+        est.add_timeseries(meas1, signal=scope[0], sigma=1.0, experiment=1)
+        result = est.fit()
+
+    *Pattern 3 — Free parameters used directly in model closures:*
+
+    .. code-block:: python
+
+        k = Parameter("k", value=1.0, bounds=(0, 5), transform=np.exp)
+
+        def ode_rhs(x, u, t):
+            return -k() * x       # k() returns exp(k.value)
+
+        est = ParameterEstimator(simulator=sim, parameters=[k])
+        est.add_timeseries(meas, signal=scope[0])
+        result = est.fit()
 
     Example
     -------
@@ -557,11 +626,18 @@ class ParameterEstimator:
         # Cache for the last residuals evaluation
         self._cached_x: np.ndarray | None = None
         self._cached_residuals: np.ndarray | None = None
+        # Deferred duration update — set True when measurements/experiments change
+        self._duration_dirty: bool = False
+        self._duration: float = 0.0
 
         # Reference simulator for cloning additional experiments
         self._base_simulator = (
             simulator if simulator is not None and hasattr(simulator, "run") else None
         )
+        # Store constructor defaults so add_experiment() can inherit them
+        self._default_adaptive: bool = adaptive
+        self._default_pre_run: Callable | None = pre_run
+        # Keep legacy dict for _ensure_experiment auto-cloning
         self._default_runner_kwargs = dict(adaptive=adaptive, pre_run=pre_run)
 
         if simulator is not None:
@@ -571,9 +647,6 @@ class ParameterEstimator:
                 adaptive=adaptive,
                 pre_run=pre_run,
             )
-
-        self.duration = 0.0
-        self._update_duration_from_measurements()
 
 
     # PROPERTIES ------------------------------------------------------------------------
@@ -602,6 +675,17 @@ class ParameterEstimator:
         return [exp.runner for exp in self.experiments]
 
 
+    @property
+    def duration(self) -> float:
+        """Total measurement time extent across all experiments.
+
+        Triggers a lazy duration update if measurements have been added since
+        the last query.
+        """
+        self._ensure_duration_current()
+        return self._duration
+
+
     # INTERNAL HELPERS ------------------------------------------------------------------
 
     def _rebuild_local_parameter_container(self) -> None:
@@ -614,6 +698,7 @@ class ParameterEstimator:
         """Update each runner's duration from its measurement time extent.
 
         Explicit durations passed to :meth:`add_experiment` act as a floor.
+        Called lazily via :meth:`_ensure_duration_current`.
         """
         for exp in self.experiments:
             if not exp.measurements:
@@ -626,7 +711,14 @@ class ParameterEstimator:
                 exp.runner.duration = dur
 
         all_meas = [m for exp in self.experiments for m in exp.measurements]
-        self.duration = float(max((m.time.max() for m in all_meas), default=0.0))
+        self._duration = float(max((m.time.max() for m in all_meas), default=0.0))
+        self._duration_dirty = False
+
+
+    def _ensure_duration_current(self) -> None:
+        """Run duration update only when measurements have changed since last call."""
+        if self._duration_dirty:
+            self._update_duration_from_measurements()
 
 
     def _ensure_experiment(self, idx: int) -> None:
@@ -741,8 +833,8 @@ class ParameterEstimator:
         simulator,
         *,
         duration: float | None = None,
-        adaptive: bool = False,
-        pre_run: Callable[[], None] | None = None,
+        adaptive: bool | object = _UNSET,
+        pre_run: Callable[[], None] | None | object = _UNSET,
         reset_time: float = 0.0,
         suppress_reset_log: bool = True,
         copy_sim: bool = False,
@@ -755,10 +847,12 @@ class ParameterEstimator:
             PathSim simulation or SimRunner-like object.
         duration : float, optional
             Explicit simulation duration. If not set, derived from measurements.
-        adaptive : bool
-            Enable adaptive stepping.
+        adaptive : bool, optional
+            Enable adaptive stepping. If not provided, inherits the value
+            passed to the :class:`ParameterEstimator` constructor.
         pre_run : callable, optional
-            Hook executed before each run.
+            Hook executed before each run. If not provided, inherits the
+            constructor default.
         reset_time : float
             Time passed to ``sim.reset()``.
         suppress_reset_log : bool
@@ -771,6 +865,11 @@ class ParameterEstimator:
         int
             Index of the newly registered experiment.
         """
+        # Inherit constructor defaults when kwargs are not explicitly provided
+        if adaptive is _UNSET:
+            adaptive = self._default_adaptive
+        if pre_run is _UNSET:
+            pre_run = self._default_pre_run
         if hasattr(simulator, "run"):
             if not copy_sim and self.experiments:
                 existing_sims = [
@@ -807,7 +906,7 @@ class ParameterEstimator:
             )
         )
         self._rebuild_local_parameter_container()
-        self._update_duration_from_measurements()
+        self._duration_dirty = True
         return len(self.experiments) - 1
 
 
@@ -888,7 +987,7 @@ class ParameterEstimator:
         )
         exp.sigma.append(float(sigma) if sigma is not None else None)
 
-        self._update_duration_from_measurements()
+        self._duration_dirty = True
         self._cached_x = None          # measurement change invalidates residuals cache
         self._cached_residuals = None
         return self
@@ -1120,6 +1219,8 @@ class ParameterEstimator:
 
     def _validate_fit_inputs(self) -> None:
         """Raise early with clear messages for degenerate fit configurations."""
+        self._ensure_duration_current()
+
         if not self.experiments:
             raise ValueError(
                 "No experiments configured. "
@@ -1206,6 +1307,7 @@ class ParameterEstimator:
                 f"(0..{len(self.experiments) - 1})"
             )
 
+        self._ensure_duration_current()
         self.apply(x)
 
         exp = self.experiments[experiment]
@@ -1236,6 +1338,7 @@ class ParameterEstimator:
         if not self.experiments:
             raise ValueError("No experiments configured.")
 
+        self._ensure_duration_current()
         x_arr = np.asarray(x, dtype=float).reshape(-1)
 
         # Return cached result if x is unchanged
