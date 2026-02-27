@@ -548,14 +548,33 @@ class ParameterEstimator:
         Default simulation duration for the first experiment. Overridden by
         measurement time extent when measurements are added.
     adaptive : bool
-        Enable adaptive stepping in the default experiment runner.
-        Inherited by subsequent :meth:`add_experiment` calls unless overridden.
+        Enable adaptive (variable) step-size control when running the
+        simulation.  Pass ``True`` if the solver is configured with error
+        tolerances (``tolerance_lte_rel`` / ``tolerance_lte_abs``); use
+        ``False`` (default) for fixed-step simulations — adaptive mode
+        on a fixed-step solver has no effect and adds overhead.
+        This value is inherited by subsequent :meth:`add_experiment` calls
+        unless explicitly overridden.
     pre_run : callable, optional
-        Hook executed before each sim run in the default experiment.
+        Callable executed just before each ``sim.run()`` in the default
+        experiment.  Useful for updating time-varying inputs or resetting
+        auxiliary state between optimizer evaluations.
         Inherited by subsequent :meth:`add_experiment` calls unless overridden.
 
     Notes
     -----
+    **Choosing how to register parameters**
+
+    - ``add_block_parameter(block, "attr", ...)`` — simplest approach;
+      directly writes the fitted value to a block attribute each iteration.
+      Use this for single-experiment problems.
+    - ``add_global_block_parameter("BlockType", "attr", ...)`` — same idea
+      but syncs the value across all deep-copied experiment simulations.
+      Use this for multi-experiment problems.
+    - ``add_parameters([p])`` / ``parameters=[p]`` constructor arg — for
+      *free* parameters that are read via ``p()`` inside model closures
+      rather than bound to a specific block attribute.
+
     **Common usage patterns**
 
     *Pattern 1 — Single experiment, block-bound parameters:*
@@ -848,11 +867,14 @@ class ParameterEstimator:
         duration : float, optional
             Explicit simulation duration. If not set, derived from measurements.
         adaptive : bool, optional
-            Enable adaptive stepping. If not provided, inherits the value
-            passed to the :class:`ParameterEstimator` constructor.
+            Enable adaptive (variable) step-size control.  Pass ``True`` when
+            the simulation solver is configured with error tolerances
+            (``tolerance_lte_rel`` / ``tolerance_lte_abs``).  Pass ``False``
+            (default) for fixed-step simulations.  If not provided, inherits
+            the value passed to the :class:`ParameterEstimator` constructor.
         pre_run : callable, optional
-            Hook executed before each run. If not provided, inherits the
-            constructor default.
+            Callable executed just before each ``sim.run()``.  If not
+            provided, inherits the constructor default.
         reset_time : float
             Time passed to ``sim.reset()``.
         suppress_reset_log : bool
@@ -1002,25 +1024,36 @@ class ParameterEstimator:
         param_id: str | None = None,
         transform: Callable[[float], float] | None = None,
     ) -> "ParameterEstimator":
-        """Add a block-bound parameter as a global parameter.
+        """Add a block attribute as a fitted parameter (single-experiment).
 
-        For a parameter shared across multiple deep-copied experiments, use
-        :meth:`add_global_block_parameter`.
+        This is the recommended way to register a block attribute for fitting
+        in single-experiment problems.  The optimizer reads and writes the
+        attribute on *block* directly during each evaluation.
+
+        For **multi-experiment** problems where the same attribute should be
+        shared across deep-copied simulations, use
+        :meth:`add_global_block_parameter` instead.
+
+        For **free parameters** that live in Python closures (not bound to any
+        block attribute), use :meth:`add_parameters` with a
+        :class:`Parameter` object instead.
 
         Parameters
         ----------
         block : object
             Target block instance.
         param_name : str
-            Attribute name on the block.
+            Attribute name on the block (e.g. ``"gain"``).
         value : float, optional
-            Initial optimizer-space value; defaults to the current attribute value.
+            Initial optimizer-space value; defaults to the block's current
+            attribute value.
         bounds : tuple[float, float]
             Lower / upper bounds in optimizer space.
         param_id : str, optional
-            Human-readable prefix for the parameter name.
+            Human-readable prefix for the parameter name used in display output.
         transform : callable, optional
-            Mapping from optimizer space to model space (e.g. ``np.exp``).
+            Mapping from optimizer space to model space (e.g. ``np.exp`` to
+            enforce positivity, ``scipy.special.exp10`` for log10 space).
 
         Returns
         -------
@@ -1041,12 +1074,28 @@ class ParameterEstimator:
 
 
     def add_parameters(self, params: list[Parameter]) -> "ParameterEstimator":
-        """Add a list of parameters as global parameters.
+        """Add pre-constructed :class:`Parameter` objects as global parameters.
+
+        Use this method when parameters are **free** — i.e. they live in a
+        Python closure and are read directly by the model code via ``p()``
+        rather than being mapped to a block attribute::
+
+            k = Parameter("k", value=1.0, bounds=(0, 5), transform=np.exp)
+
+            def ode_rhs(x, u, t):
+                return -k() * x          # k() returns the model-space value
+
+            est = ParameterEstimator(simulator=sim, parameters=[k])
+            est.add_parameters([k])      # or pass parameters= to constructor
+
+        For block-bound parameters (writing to a block attribute), prefer
+        :meth:`add_block_parameter` — it is simpler and does not require
+        constructing a :class:`Parameter` manually.
 
         Parameters
         ----------
         params : list[Parameter]
-            Parameters to add (free or block-bound).
+            :class:`Parameter` instances to register as global parameters.
 
         Returns
         -------
@@ -1410,8 +1459,17 @@ class ParameterEstimator:
             Loss function for ``scipy.optimize.least_squares``
             (``"linear"``, ``"soft_l1"``, ``"huber"``, ``"cauchy"``,
             ``"arctan"``).  Ignored for ``minimize`` methods.
+            Use ``"linear"`` (default) when measurements have Gaussian noise.
+            Use ``"soft_l1"`` or ``"huber"`` when the data contains outliers.
         f_scale : float
-            Soft margin for robust losses (``least_squares`` only).
+            Residual scale for robust loss functions (``least_squares`` only).
+            Residuals smaller than ``f_scale`` are treated as inliers and
+            minimised normally; residuals larger than ``f_scale`` are
+            downweighted by the chosen ``loss`` function.  Set this to the
+            expected magnitude of a *good* residual — typically the
+            measurement noise level.  For example, if measurements are in
+            units of milliamps and noise is roughly ±2 mA, use
+            ``f_scale=2``.  Has no effect when ``loss="linear"``.
         max_nfev : int
             Maximum function evaluations (``least_squares``) or iterations
             (``minimize``).
