@@ -87,6 +87,7 @@ class TimeSeriesData:
     def plot(
         self,
         *,
+        ax=None,
         marker: str = "o",
         markersize: float = 6.0,
         markevery: int | None = None,
@@ -97,6 +98,9 @@ class TimeSeriesData:
 
         Parameters
         ----------
+        ax : matplotlib.axes.Axes, optional
+            Existing axes to draw into. If ``None`` (default), a new figure
+            and axes are created.
         marker : str, optional
             Marker style passed to ``matplotlib.pyplot.plot``.
         markersize : float, optional
@@ -108,6 +112,10 @@ class TimeSeriesData:
         alpha : float, optional
             Alpha transparency.
 
+        Returns
+        -------
+        ax : matplotlib.axes.Axes
+
         Notes
         -----
         For 2D data, each column is treated as an independent channel and
@@ -115,7 +123,9 @@ class TimeSeriesData:
         """
         import matplotlib.pyplot as plt  # lazy import
 
-        plt.figure(figsize=(8, 4))
+        if ax is None:
+            _, ax = plt.subplots(figsize=(8, 4))
+
         plot_kws = dict(
             marker=marker,
             markersize=markersize,
@@ -125,21 +135,22 @@ class TimeSeriesData:
         )
 
         if self.data.ndim == 1:
-            plt.plot(self.time, self.data, label=self.name, **plot_kws)
+            ax.plot(self.time, self.data, label=self.name, **plot_kws)
         else:
             for i in range(self.data.shape[1]):
-                plt.plot(
+                ax.plot(
                     self.time, self.data[:, i],
                     label=f"{self.name}_{i}", **plot_kws,
                 )
 
-        plt.xlabel(f"Time ({self.time_info['units']})")
-        plt.ylabel("Measurement")
-        plt.title(f"Time Series: {self.name}")
-        plt.legend()
-        plt.grid(True)
+        ax.set_xlabel(f"Time ({self.time_info['units']})")
+        ax.set_ylabel("Measurement")
+        ax.set_title(f"Time Series: {self.name}")
+        ax.legend()
+        ax.grid(True)
         plt.tight_layout()
         plt.show()
+        return ax
 
 
     @property

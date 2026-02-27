@@ -32,8 +32,6 @@ __all__ = [
     "Experiment",
     "ParameterEstimator",
     "EstimatorResult",
-    "block_param_to_var",
-    "free_param_to_var",
 ]
 
 
@@ -554,6 +552,12 @@ class ParameterEstimator:
         # Experiments
         self.experiments: list[Experiment] = []
 
+        # Cache for the flattened parameter list — invalidated on any add_*
+        self._params_cache: list[Parameter] | None = None
+        # Cache for the last residuals evaluation
+        self._cached_x: np.ndarray | None = None
+        self._cached_residuals: np.ndarray | None = None
+
         # Reference simulator for cloning additional experiments
         self._base_simulator = (
             simulator if simulator is not None and hasattr(simulator, "run") else None
@@ -577,10 +581,19 @@ class ParameterEstimator:
     @property
     def parameters(self) -> list[Parameter]:
         """Flattened parameter list: globals first, then locals experiment-by-experiment."""
-        params: list[Parameter] = list(self.global_parameters)
-        for exp_params in self.local_parameters:
-            params.extend(exp_params)
-        return params
+        if self._params_cache is None:
+            params: list[Parameter] = list(self.global_parameters)
+            for exp_params in self.local_parameters:
+                params.extend(exp_params)
+            self._params_cache = params
+        return self._params_cache
+
+
+    def _invalidate_cache(self) -> None:
+        """Invalidate parameter list and residuals caches."""
+        self._params_cache = None
+        self._cached_x = None
+        self._cached_residuals = None
 
 
     @property
@@ -822,7 +835,9 @@ class ParameterEstimator:
             PortReference (``scope[0]``). Pass either ``signal=`` or
             ``scope=`` / ``port=``, not both.
         sigma : float, optional
-            Noise scaling for residual normalization (default: 1.0).
+            Measurement noise standard deviation used to normalize residuals:
+            ``r = (y_pred - y_meas) / sigma``.  A larger value down-weights
+            noisy measurements relative to others.  Defaults to 1.0.
         experiment : int
             Experiment index to attach this dataset to.
 
@@ -874,6 +889,8 @@ class ParameterEstimator:
         exp.sigma.append(float(sigma) if sigma is not None else None)
 
         self._update_duration_from_measurements()
+        self._cached_x = None          # measurement change invalidates residuals cache
+        self._cached_residuals = None
         return self
 
 
@@ -920,6 +937,7 @@ class ParameterEstimator:
                 transform=transform,
             )
         )
+        self._invalidate_cache()
         return self
 
 
@@ -936,6 +954,7 @@ class ParameterEstimator:
         ParameterEstimator
         """
         self.global_parameters.extend(params)
+        self._invalidate_cache()
         return self
 
 
@@ -1018,11 +1037,8 @@ class ParameterEstimator:
                 transform=transform,
             )
         )
+        self._invalidate_cache()
         return self
-
-
-    # Backwards-compatible alias
-    add_shared_block_parameter = add_global_block_parameter
 
 
     def add_local_block_parameter(
@@ -1096,6 +1112,7 @@ class ParameterEstimator:
                 transform=transform,
             )
         )
+        self._invalidate_cache()
         return self
 
 
@@ -1219,7 +1236,17 @@ class ParameterEstimator:
         if not self.experiments:
             raise ValueError("No experiments configured.")
 
-        self.apply(x)
+        x_arr = np.asarray(x, dtype=float).reshape(-1)
+
+        # Return cached result if x is unchanged
+        if (
+            self._cached_x is not None
+            and x_arr.shape == self._cached_x.shape
+            and np.array_equal(x_arr, self._cached_x)
+        ):
+            return self._cached_residuals.copy()
+
+        self.apply(x_arr)
 
         all_residuals: list[np.ndarray] = []
 
@@ -1248,10 +1275,11 @@ class ParameterEstimator:
                 sigma_i = exp.sigma[i] if exp.sigma[i] is not None else 1.0
                 all_residuals.append((y_pred - meas_data) / sigma_i)
 
-        if not all_residuals:
-            return np.array([], dtype=float)
+        result = np.concatenate(all_residuals) if all_residuals else np.array([], dtype=float)
 
-        return np.concatenate(all_residuals)
+        self._cached_x = x_arr.copy()
+        self._cached_residuals = result.copy()
+        return result
 
 
     def fit(

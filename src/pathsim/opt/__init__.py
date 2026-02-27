@@ -17,7 +17,5 @@ from .parameter_estimator import (
     Experiment,
     ParameterEstimator,
     EstimatorResult,
-    block_param_to_var,
-    free_param_to_var,
 )
 from .timeseries_data import TimeSeriesData

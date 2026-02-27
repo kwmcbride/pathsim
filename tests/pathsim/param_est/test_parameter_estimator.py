@@ -22,8 +22,8 @@ from pathsim.opt.parameter_estimator import (
     Experiment,
     EstimatorResult,
     ParameterEstimator,
-    block_param_to_var,
-    free_param_to_var,
+    block_param_to_var,   # internal helper — tested directly
+    free_param_to_var,    # internal helper — tested directly
 )
 from pathsim.opt.timeseries_data import TimeSeriesData
 
@@ -456,15 +456,16 @@ class TestParameterEstimatorParameters:
         est.add_global_block_parameter("_DummyBlock", "value", value=10.0)
         assert len(est.global_parameters) == 1
 
-    def test_add_shared_block_parameter_alias(self):
-        """add_shared_block_parameter is an alias for add_global_block_parameter."""
+    def test_add_global_block_parameter_two_experiments(self):
+        """Global block parameter targets matching blocks in both experiments."""
         scope = _DummyScope()
         blk = _DummyBlock(value=1.0)
         sim = _DummySim(blocks=[blk, scope])
         est = ParameterEstimator(simulator=sim)
         est.add_experiment(sim, copy_sim=True)
-        est.add_shared_block_parameter("_DummyBlock", "value", value=5.0)
+        est.add_global_block_parameter("_DummyBlock", "value", value=5.0)
         assert len(est.global_parameters) == 1
+        assert isinstance(est.global_parameters[0], SharedBlockParameter)
 
     def test_add_local_block_parameter(self):
         scope = _DummyScope()
@@ -1288,3 +1289,155 @@ class TestCopySimWarning:
         with _warnings.catch_warnings():
             _warnings.simplefilter("error")
             est.add_experiment(sim2)  # no warning expected
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Caching tests
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestCaching:
+
+    def _make_est(self):
+        scope = _DummyScope()
+        blk = _DummyBlock(value=1.0)
+        sim = _DummySim(blocks=[blk, scope])
+        est = ParameterEstimator(simulator=sim)
+        ts = TimeSeriesData(time=np.array([0.0, 0.5, 1.0]), data=np.array([0, 0.5, 1]))
+        est.add_block_parameter(blk, "value", value=1.0)
+        est.add_timeseries(ts, scope=scope, port=0)
+        return est, blk, sim
+
+    def test_residuals_cached_on_repeat_call(self):
+        """Calling residuals() twice with the same x skips re-running the sim."""
+        est, blk, sim = self._make_est()
+        x = np.array([1.0])
+        r1 = est.residuals(x)
+        sim._ran = False           # reset the flag
+        r2 = est.residuals(x)     # should use cache — sim should NOT run again
+        assert not sim._ran, "simulation re-ran despite identical x"
+        np.testing.assert_array_equal(r1, r2)
+
+    def test_residuals_recomputed_on_different_x(self):
+        """Calling residuals() with a new x must recompute."""
+        est, blk, sim = self._make_est()
+        r1 = est.residuals(np.array([1.0]))
+        sim._ran = False
+        r2 = est.residuals(np.array([2.0]))
+        assert sim._ran, "simulation did not re-run for different x"
+        assert not np.array_equal(r1, r2)
+
+    def test_cache_invalidated_on_add_parameter(self):
+        """Adding a parameter after first residuals call forces recomputation."""
+        est, blk, sim = self._make_est()
+        est.residuals(np.array([1.0]))
+        assert est._params_cache is not None
+
+        est.add_block_parameter(blk, "gain", value=2.0)
+        assert est._params_cache is None, "params cache not cleared after add_block_parameter"
+
+    def test_cache_invalidated_on_add_timeseries(self):
+        """Adding a new measurement invalidates the residuals cache."""
+        scope = _DummyScope()
+        blk = _DummyBlock(value=1.0)
+        sim = _DummySim(blocks=[blk, scope])
+        est = ParameterEstimator(simulator=sim)
+        ts = TimeSeriesData(time=np.array([0.0, 1.0]), data=np.array([0, 1]))
+        est.add_block_parameter(blk, "value", value=1.0)
+        est.add_timeseries(ts, scope=scope, port=0)
+        est.residuals(np.array([1.0]))
+
+        ts2 = TimeSeriesData(time=np.array([0.0, 1.0]), data=np.array([0, 2]))
+        est.add_timeseries(ts2, scope=scope, port=0)
+        assert est._cached_x is None, "residuals cache not cleared after add_timeseries"
+
+    def test_parameters_property_cached(self):
+        """parameters property returns the same list object on repeat access."""
+        est, blk, sim = self._make_est()
+        p1 = est.parameters
+        p2 = est.parameters
+        assert p1 is p2, "parameters property should return cached list"
+
+    def test_parameters_cache_invalidated_by_add_parameters(self):
+        est, blk, sim = self._make_est()
+        _ = est.parameters               # populate cache
+        est.add_parameters([Parameter("free", value=1.0)])
+        assert est._params_cache is None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# NaN / Inf handling tests
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestNanInfHandling:
+
+    def test_residuals_nan_in_measurement_propagates(self):
+        """NaN in measurement data propagates to residuals (not silently dropped)."""
+        scope = _DummyScope()
+        blk = _DummyBlock(value=1.0)
+        sim = _DummySim(blocks=[blk, scope])
+        est = ParameterEstimator(simulator=sim)
+
+        t = np.array([0.0, 0.5, 1.0])
+        y = np.array([0.0, np.nan, 1.0])
+        ts = TimeSeriesData.__new__(TimeSeriesData)  # bypass validation
+        ts.time = t
+        ts.data = y
+        ts.name = "test"
+        ts.time_info = {"time_range": {"start": 0.0, "end": 1.0}, "units": "s"}
+
+        est.add_block_parameter(blk, "value", value=1.0)
+        est.add_timeseries(ts, scope=scope, port=0)
+
+        r = est.residuals(np.array([1.0]))
+        assert np.any(np.isnan(r)), "NaN in measurement should propagate to residuals"
+
+    def test_residuals_finite_for_normal_data(self):
+        """Residuals are fully finite for clean data."""
+        scope = _DummyScope()
+        blk = _DummyBlock(value=1.0)
+        sim = _DummySim(blocks=[blk, scope])
+        est = ParameterEstimator(simulator=sim)
+
+        ts = TimeSeriesData(
+            time=np.array([0.0, 0.5, 1.0]),
+            data=np.array([0.0, 0.5, 1.0]),
+        )
+        est.add_block_parameter(blk, "value", value=1.0)
+        est.add_timeseries(ts, scope=scope, port=0)
+
+        r = est.residuals(np.array([1.0]))
+        assert np.all(np.isfinite(r))
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TimeSeriesData.plot() ax= parameter
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestTimeSeriesDataPlot:
+
+    def test_plot_returns_ax(self):
+        pytest.importorskip("matplotlib")
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        ts = TimeSeriesData(
+            time=np.array([0.0, 1.0, 2.0]),
+            data=np.array([0.0, 1.0, 2.0]),
+        )
+        ax = ts.plot()
+        assert ax is not None
+
+    def test_plot_reuses_existing_ax(self):
+        pytest.importorskip("matplotlib")
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots()
+        ts = TimeSeriesData(
+            time=np.array([0.0, 1.0, 2.0]),
+            data=np.array([0.0, 1.0, 2.0]),
+        )
+        returned = ts.plot(ax=ax)
+        assert returned is ax
