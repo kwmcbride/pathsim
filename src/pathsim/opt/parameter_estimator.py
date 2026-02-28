@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import copy
+import types as _types
 import warnings
 from dataclasses import dataclass
 from typing import Any, Callable, Sequence
@@ -24,6 +25,99 @@ from ..utils.timeseries_data import TimeSeriesData
 
 # Sentinel for "argument not provided" — distinguishes None from unset
 _UNSET = object()
+
+
+# DEEP-COPY HELPERS =====================================================================
+#
+# Python treats functions (including lambdas) as atomic during deepcopy: the
+# new Operator object holds the exact same function object, so any closure that
+# captures `self` (e.g. `lambda x: x * self.gain` in Amplifier) still refers
+# to the ORIGINAL block after the copy.  The helpers below fix this by walking
+# all block operators after deepcopy and rebuilding any function whose closure
+# contains an original-block reference.
+
+def _make_cell(value):
+    """Return a new closure cell containing *value*."""
+    def _factory():
+        return value
+    return _factory.__closure__[0]
+
+
+def _rebind_func_closure(func, memo):
+    """Return a copy of *func* with stale closure cells rebound via *memo*.
+
+    After ``copy.deepcopy(sim, memo)``, *memo* maps ``id(original) -> copy``.
+    Any closure cell whose content appears as a key in *memo* (and whose copy
+    differs from the original) is replaced.  Returns *func* unchanged when no
+    rebinding is required.
+    """
+    closure = getattr(func, "__closure__", None)
+    if not closure:
+        return func
+
+    new_cells = []
+    needs_fix = False
+    for cell in closure:
+        try:
+            obj = cell.cell_contents
+        except ValueError:            # empty cell
+            new_cells.append(cell)
+            continue
+        copied = memo.get(id(obj))
+        if copied is not None and copied is not obj:
+            new_cells.append(_make_cell(copied))
+            needs_fix = True
+        else:
+            new_cells.append(cell)
+
+    if not needs_fix:
+        return func
+
+    new_func = _types.FunctionType(
+        func.__code__,
+        func.__globals__,
+        func.__name__,
+        func.__defaults__,
+        tuple(new_cells),
+    )
+    if func.__kwdefaults__ is not None:
+        new_func.__kwdefaults__ = func.__kwdefaults__
+    return new_func
+
+
+def _fix_sim_operator_closures(sim_copy, memo):
+    """Walk every block operator in *sim_copy* and rebind stale closures.
+
+    Covers ``op_alg`` (``Operator``) and ``op_dyn`` (``DynamicOperator``),
+    checking all stored callable attributes: ``_func``, ``_jac``,
+    ``_jac_x``, ``_jac_u``.
+    """
+    for block in getattr(sim_copy, "blocks", []):
+        for op_attr in ("op_alg", "op_dyn"):
+            op = getattr(block, op_attr, None)
+            if op is None:
+                continue
+            for func_attr in ("_func", "_jac", "_jac_x", "_jac_u"):
+                func = getattr(op, func_attr, None)
+                if func is None or not callable(func):
+                    continue
+                fixed = _rebind_func_closure(func, memo)
+                if fixed is not func:
+                    setattr(op, func_attr, fixed)
+
+
+def _deepcopy_sim(simulator):
+    """Deep-copy *simulator* and fix operator closure references.
+
+    Equivalent to ``copy.deepcopy(simulator)`` but additionally walks every
+    block's algebraic and dynamic operators to rebind any lambda closure that
+    still references an original block object after the copy.
+    """
+    memo: dict = {}
+    sim_copy = copy.deepcopy(simulator, memo)
+    _fix_sim_operator_closures(sim_copy, memo)
+    return sim_copy
+
 
 __all__ = [
     "Parameter",
@@ -908,7 +1002,7 @@ class ParameterEstimator:
                         stacklevel=2,
                     )
 
-            sim_obj = copy.deepcopy(simulator) if copy_sim else simulator
+            sim_obj = _deepcopy_sim(simulator) if copy_sim else simulator
             runner = SimRunner(
                 sim=sim_obj,
                 output=None,
@@ -1393,6 +1487,7 @@ class ParameterEstimator:
         # Return cached result if x is unchanged
         if (
             self._cached_x is not None
+            and self._cached_residuals is not None
             and x_arr.shape == self._cached_x.shape
             and np.array_equal(x_arr, self._cached_x)
         ):
@@ -1579,6 +1674,277 @@ class ParameterEstimator:
         )
 
 
+    # NESTED SCHUR OPTIMIZATION ---------------------------------------------------------
+
+    def fit_nested(
+        self,
+        *,
+        x0_G: "Sequence[float] | np.ndarray | None" = None,
+        max_outer_nfev: int = 50,
+        max_inner_nfev: int = 30,
+        eps: float | None = None,
+        loss: str = "linear",
+        f_scale: float = 1.0,
+        verbose: int = 0,
+    ) -> "EstimatorResult":
+        """Bilevel nested Schur optimization for multi-experiment problems.
+
+        Outer loop (global parameters)
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        Drives Gauss-Newton updates on the global parameters ``θ_G`` using the
+        *reduced* Jacobian and the Schur complement as the reduced Hessian::
+
+            Δθ_G = −S_G⁻¹ g_G_red
+
+        where
+
+        * ``S_G = Σᵢ J_red_iᵀ J_red_i`` — Schur complement (reduced Hessian)
+        * ``g_G_red = Σᵢ J_red_iᵀ r_i*`` — reduced gradient
+
+        The reduced Jacobian for experiment *i* is obtained by projecting out
+        the directions explained by the local parameters::
+
+            J_red_i = P_{L,i} J_{G,i}
+
+        where ``P_{L,i} = I − J_{L,i}(J_{L,i}ᵀJ_{L,i})⁻¹J_{L,i}ᵀ`` is the
+        orthogonal projector onto the complement of the column space of
+        ``J_{L,i}``.  Computed stably as::
+
+            A = lstsq(J_Li, [r_i | J_Gi])
+            r_red_i = r_i − J_Li @ A[:, 0]     # P_{L,i} r_i
+            J_red_i = J_Gi − J_Li @ A[:, 1:]   # P_{L,i} J_{G,i}
+
+        Inner loop (local parameters, one per experiment)
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        For each fixed ``θ_G``, every experiment's local parameters
+        ``θ_{L,i}`` are optimised independently via
+        ``scipy.optimize.least_squares``.  The inner problems are fully
+        decoupled — each only involves one experiment's data.
+
+        Parameters
+        ----------
+        x0_G : array_like, optional
+            Initial global parameter vector in optimizer space.  Defaults to
+            the current global parameter values.
+        max_outer_nfev : int
+            Maximum outer function evaluations.  Each counts as one call to
+            the reduced residual/Jacobian, which internally solves all inner
+            problems plus ``n_G`` finite-difference perturbations per
+            experiment.
+        max_inner_nfev : int
+            Maximum function evaluations for each inner
+            ``scipy.optimize.least_squares`` call.
+        eps : float, optional
+            Relative finite-difference step for Jacobian computation.
+            Defaults to ``√(machine epsilon) ≈ 1.5e-8``.
+        loss : str
+            Robust loss for the outer problem (``"linear"``, ``"soft_l1"``,
+            ``"huber"``, …).
+        f_scale : float
+            Residual scale for robust outer loss.
+        verbose : int
+            0 = silent, 1 = print outer cost each iteration, 2 = full scipy
+            output.
+
+        Returns
+        -------
+        EstimatorResult
+            ``x`` contains the full parameter vector
+            ``[x_G*, x_L0*, x_L1*, …]`` in the same order as
+            :attr:`parameters`.  Cached so that :meth:`sensitivity` works
+            immediately after without arguments.
+
+        Raises
+        ------
+        ValueError
+            If no global parameters are registered.
+
+        Notes
+        -----
+        Falls back to :meth:`fit` when no local parameters are present.
+        """
+        self._validate_fit_inputs()
+
+        n_G = len(self.global_parameters)
+        if n_G == 0:
+            raise ValueError(
+                "fit_nested requires at least one global parameter. "
+                "Use fit() for single-experiment problems."
+            )
+
+        has_locals = any(len(lp) > 0 for lp in self.local_parameters)
+        if not has_locals:
+            x0_list = (
+                [p.value for p in self.global_parameters]
+                if x0_G is None else list(x0_G)
+            )
+            return self.fit(
+                x0=x0_list, loss=loss, f_scale=f_scale,
+                max_nfev=max_outer_nfev, verbose=verbose,
+            )
+
+        self._ensure_duration_current()
+        rel = eps if eps is not None else np.sqrt(np.finfo(float).eps)
+
+        # ── Initial vectors and bounds ───────────────────────────────────────
+        x_G0 = (
+            np.array([p.value for p in self.global_parameters], dtype=float)
+            if x0_G is None else np.asarray(x0_G, dtype=float).reshape(-1)
+        )
+        x_G_lo = np.array([p.bounds[0] for p in self.global_parameters], dtype=float)
+        x_G_hi = np.array([p.bounds[1] for p in self.global_parameters], dtype=float)
+
+        # Per-experiment local vectors — warm-started from current values
+        n_exp = len(self.experiments)
+        x_Ls     = [np.array([p.value for p in self.local_parameters[i]], dtype=float)
+                    for i in range(n_exp)]
+        x_Ls_lo  = [np.array([p.bounds[0] for p in self.local_parameters[i]], dtype=float)
+                    for i in range(n_exp)]
+        x_Ls_hi  = [np.array([p.bounds[1] for p in self.local_parameters[i]], dtype=float)
+                    for i in range(n_exp)]
+
+        # ── Per-experiment residual function ─────────────────────────────────
+        def _resid_exp(exp_idx: int, x_G: np.ndarray, x_Li: np.ndarray) -> np.ndarray:
+            """Run one experiment and return its weighted residual vector."""
+            for j, p in enumerate(self.global_parameters):
+                p.set(float(x_G[j]))
+            for j, p in enumerate(self.local_parameters[exp_idx]):
+                p.set(float(x_Li[j]))
+            exp = self.experiments[exp_idx]
+            exp.runner.run()
+            parts: list[np.ndarray] = []
+            for k, meas in enumerate(exp.measurements):
+                out    = self._resolve_output(exp, exp.outputs[k])
+                t_o, y_o = out.read()
+                y_pred = np.interp(
+                    meas.time,
+                    np.asarray(t_o, dtype=float),
+                    np.asarray(y_o, dtype=float),
+                )
+                sig = exp.sigma[k] if exp.sigma[k] is not None else 1.0
+                parts.append(
+                    (y_pred - np.asarray(meas.data, dtype=float).reshape(-1)) / sig
+                )
+            return np.concatenate(parts) if parts else np.array([], dtype=float)
+
+        # ── Outer: build reduced residuals + reduced Jacobian ────────────────
+        def _outer(x_G: np.ndarray):
+            """
+            For each experiment i:
+              1. Solve inner problem  →  x_Li*, r_i*
+              2. Compute J_Gi  (FD, locals frozen at x_Li*)
+              3. Compute J_Li  (FD, x_G fixed)
+              4. Reduce:  solve J_Li @ A = [r_i | J_Gi]
+                          r_red_i = r_i - J_Li @ A[:,0]
+                          J_red_i = J_Gi - J_Li @ A[:,1:]
+            Returns (r_red_stacked, J_red_stacked).
+            """
+            all_r: list[np.ndarray] = []
+            all_J: list[np.ndarray] = []
+
+            for exp_idx, exp in enumerate(self.experiments):
+                if not exp.measurements:
+                    continue
+
+                n_Li = (
+                    len(self.local_parameters[exp_idx])
+                    if exp_idx < len(self.local_parameters) else 0
+                )
+
+                # ── Inner: solve local parameters ─────────────────────────
+                if n_Li > 0:
+                    inner = sci_opt.least_squares(
+                        lambda xl, ei=exp_idx: _resid_exp(ei, x_G, xl),
+                        x0=x_Ls[exp_idx],
+                        bounds=(x_Ls_lo[exp_idx], x_Ls_hi[exp_idx]),
+                        max_nfev=max_inner_nfev,
+                    )
+                    x_Ls[exp_idx] = inner.x
+                    r_i = inner.fun
+                else:
+                    r_i = _resid_exp(exp_idx, x_G, np.array([]))
+
+                n_r = len(r_i)
+
+                # ── J_Gi: FD w.r.t. globals (locals frozen at x_Li*) ──────
+                J_Gi = np.empty((n_r, n_G))
+                for j in range(n_G):
+                    h = rel * max(1.0, abs(x_G[j]))
+                    xp = x_G.copy(); xp[j] += h
+                    J_Gi[:, j] = (_resid_exp(exp_idx, xp, x_Ls[exp_idx]) - r_i) / h
+
+                if n_Li > 0:
+                    # ── J_Li: FD w.r.t. locals (x_G fixed) ───────────────
+                    J_Li = np.empty((n_r, n_Li))
+                    for j in range(n_Li):
+                        h = rel * max(1.0, abs(x_Ls[exp_idx][j]))
+                        xl = x_Ls[exp_idx].copy(); xl[j] += h
+                        J_Li[:, j] = (_resid_exp(exp_idx, x_G, xl) - r_i) / h
+
+                    # ── Reduce via orthogonal projection ──────────────────
+                    # Solve J_Li @ A = [r_i | J_Gi]  (one lstsq for both)
+                    rhs = np.column_stack([r_i.reshape(-1, 1), J_Gi])
+                    A, _, _, _ = np.linalg.lstsq(J_Li, rhs, rcond=None)
+                    r_red_i = r_i    - J_Li @ A[:, 0]
+                    J_red_i = J_Gi   - J_Li @ A[:, 1:]
+                else:
+                    r_red_i = r_i
+                    J_red_i = J_Gi
+
+                all_r.append(r_red_i)
+                all_J.append(J_red_i)
+
+            return np.concatenate(all_r), np.vstack(all_J)
+
+        # ── Cache: scipy calls fun then jac with the same x in each step ────
+        _cache: dict = {"x": None, "r": None, "J": None}
+
+        def _ensure(x_G: np.ndarray) -> None:
+            if _cache["x"] is None or not np.array_equal(x_G, _cache["x"]):
+                _cache["r"], _cache["J"] = _outer(x_G)
+                _cache["x"] = x_G.copy()
+                if verbose >= 1:
+                    cost = float(0.5 * np.dot(_cache["r"], _cache["r"]))
+                    print(f"  [nested] outer cost = {cost:.6g}")
+
+        def _outer_fun(x_G: np.ndarray) -> np.ndarray:
+            _ensure(x_G); return _cache["r"]
+
+        def _outer_jac(x_G: np.ndarray) -> np.ndarray:
+            _ensure(x_G); return _cache["J"]
+
+        # ── Run outer optimisation ───────────────────────────────────────────
+        outer_res = sci_opt.least_squares(
+            _outer_fun,
+            x0=x_G0,
+            jac=_outer_jac,
+            bounds=(x_G_lo, x_G_hi),
+            loss=loss,
+            f_scale=float(f_scale),
+            max_nfev=max_outer_nfev,
+            verbose=max(0, verbose - 1),
+        )
+
+        x_G_opt = outer_res.x
+
+        # Ensure x_Ls is consistent with the converged x_G_opt
+        _ensure(x_G_opt)
+
+        # ── Store full solution ──────────────────────────────────────────────
+        x_full = np.concatenate([x_G_opt] + x_Ls)
+        self.apply(x_full)
+        self._cached_x        = x_full.copy()
+        self._cached_residuals = None
+
+        return EstimatorResult(
+            x=x_full,
+            cost=float(outer_res.cost),
+            nfev=int(outer_res.nfev),
+            success=bool(outer_res.success),
+            message=str(outer_res.message),
+        )
+
+
     # SENSITIVITY & IDENTIFIABILITY -----------------------------------------------------
 
     def sensitivity(
@@ -1634,7 +2000,7 @@ class ParameterEstimator:
         >>> sens.display()
         >>> fig, axes = sens.plot()
         """
-        from .sensitivity import SensitivityResult
+        from .sensitivity import SchurResult, SensitivityResult
 
         self._validate_fit_inputs()
 
@@ -1667,10 +2033,65 @@ class ParameterEstimator:
             for i, p in enumerate(params)
         ])
 
+        # ── Nested Schur complement (multi-experiment, global + local params) ─────
+        #
+        # When both global and local parameters exist, marginalise out local
+        # uncertainty to obtain the effective FIM for the global parameters:
+        #
+        #   S_G = F_GG  −  Σᵢ  F_{GL_i} · pinv(F_{L_iL_i}) · F_{GL_i}ᵀ
+        #
+        # Column partition of jac:  [ G (n_G) | L_0 (n_L0) | L_1 (n_L1) | … ]
+        # Row    partition of jac:  experiments with measurements, in order.
+        #
+        n_G = len(self.global_parameters)
+        has_locals = any(len(lp) > 0 for lp in self.local_parameters)
+
+        schur: "SchurResult | None" = None
+
+        if n_G > 0 and has_locals:
+            F_GG = jac[:, :n_G].T @ jac[:, :n_G]   # global–global FIM block
+            S_G  = F_GG.copy()
+
+            row_offset = 0
+            col_offset = n_G
+
+            for exp_idx, exp in enumerate(self.experiments):
+                n_r_i = (
+                    sum(len(m.time) for m in exp.measurements)
+                    if exp.measurements else 0
+                )
+                n_L_i = (
+                    len(self.local_parameters[exp_idx])
+                    if exp_idx < len(self.local_parameters) else 0
+                )
+
+                if n_L_i > 0 and n_r_i > 0:
+                    J_Gi   = jac[row_offset:row_offset + n_r_i, :n_G]
+                    J_Li   = jac[row_offset:row_offset + n_r_i,
+                                 col_offset:col_offset + n_L_i]
+                    F_LiLi = J_Li.T @ J_Li
+                    F_GLi  = J_Gi.T @ J_Li
+                    S_G   -= F_GLi @ np.linalg.pinv(F_LiLi) @ F_GLi.T
+
+                row_offset += n_r_i
+                col_offset += n_L_i
+
+            global_values = np.array([
+                p.transform(x_arr[i]) if p.transform is not None else x_arr[i]
+                for i, p in enumerate(self.global_parameters)
+            ])
+
+            schur = SchurResult(
+                schur_fim=S_G,
+                param_names=[p.name for p in self.global_parameters],
+                param_values=global_values,
+            )
+
         return SensitivityResult(
             jacobian=jac,
             param_names=names,
             param_values=values,
+            schur=schur,
         )
 
 
