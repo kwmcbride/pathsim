@@ -1579,6 +1579,101 @@ class ParameterEstimator:
         )
 
 
+    # SENSITIVITY & IDENTIFIABILITY -----------------------------------------------------
+
+    def sensitivity(
+        self,
+        x: "Sequence[float] | np.ndarray | None" = None,
+        *,
+        eps: float | None = None,
+    ) -> "SensitivityResult":
+        """Compute local sensitivity and practical identifiability at ``x``.
+
+        Evaluates the weighted Jacobian **J** = ``∂r/∂θ`` by finite
+        differences, then derives the Fisher Information Matrix and the
+        parameter covariance to assess which parameters are well-constrained
+        and which are correlated or unidentifiable.
+
+        Parameters
+        ----------
+        x : array_like, optional
+            Parameter vector (optimizer space) at which to evaluate.
+            Defaults to the vector cached from the most recent
+            :meth:`fit` call so that ``est.sensitivity()`` works right
+            after fitting.
+        eps : float, optional
+            Relative finite-difference step size.  Defaults to
+            ``√(machine epsilon) ≈ 1.5e-8``.  Increase for noisy or
+            discontinuous residuals (e.g. ``eps=1e-4``).
+
+        Returns
+        -------
+        SensitivityResult
+            Contains the Jacobian, FIM, covariance, standard errors,
+            correlation matrix, eigenvalues, and condition number.
+            Call ``.display()`` for a formatted summary or ``.plot()``
+            for visualizations.
+
+        Raises
+        ------
+        ValueError
+            If no ``x`` is provided and no previous fit result is cached.
+
+        Notes
+        -----
+        Each parameter requires one additional simulation run (2-point
+        finite differences), so the total cost is ``n_params`` runs.
+        The residuals are already normalised by ``sigma`` inside
+        :meth:`residuals`, so the resulting standard errors reflect the
+        per-measurement noise level without further scaling.
+
+        Examples
+        --------
+        >>> result = est.fit()
+        >>> sens = est.sensitivity()
+        >>> sens.display()
+        >>> fig, axes = sens.plot()
+        """
+        from .sensitivity import SensitivityResult
+
+        self._validate_fit_inputs()
+
+        if x is None:
+            if self._cached_x is None:
+                raise ValueError(
+                    "No x provided and no cached fit result available. "
+                    "Run fit() first or pass x explicitly."
+                )
+            x_arr = self._cached_x.copy()
+        else:
+            x_arr = np.asarray(x, dtype=float).reshape(-1)
+
+        # Finite-difference Jacobian via 2-point forward differences.
+        # step_j = rel_step * max(1, |x_j|) to scale with parameter magnitude.
+        rel = eps if eps is not None else np.sqrt(np.finfo(float).eps)
+        r0  = self.residuals(x_arr)
+        jac = np.empty((len(r0), len(x_arr)))
+        for j, xj in enumerate(x_arr):
+            h         = rel * max(1.0, abs(xj))
+            xp        = x_arr.copy()
+            xp[j]    += h
+            jac[:, j] = (self.residuals(xp) - r0) / h
+
+        # Build model-space values and names from flattened parameter list
+        params = self.parameters
+        names  = [p.name for p in params]
+        values = np.array([
+            p.transform(x_arr[i]) if p.transform is not None else x_arr[i]
+            for i, p in enumerate(params)
+        ])
+
+        return SensitivityResult(
+            jacobian=jac,
+            param_names=names,
+            param_values=values,
+        )
+
+
     # RESULTS AND VISUALIZATION ---------------------------------------------------------
 
     def display(self) -> None:

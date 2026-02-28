@@ -19,3 +19,4 @@ from .parameter_estimator import (
     EstimatorResult,
 )
 from ..utils.timeseries_data import TimeSeriesData
+from .sensitivity import SensitivityResult
