@@ -20,7 +20,7 @@ import numpy as np
 import scipy.optimize as sci_opt
 
 from ..blocks._block import Block
-from .timeseries_data import TimeSeriesData
+from ..utils.timeseries_data import TimeSeriesData
 
 # Sentinel for "argument not provided" — distinguishes None from unset
 _UNSET = object()

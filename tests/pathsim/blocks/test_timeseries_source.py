@@ -13,7 +13,7 @@ import unittest
 import numpy as np
 
 from pathsim.blocks.timeseries_source import TimeSeriesSource, _interp_at, _zoh_at
-from pathsim.opt.timeseries_data import TimeSeriesData
+from pathsim.utils.timeseries_data import TimeSeriesData
 
 
 # HELPERS ==============================================================================

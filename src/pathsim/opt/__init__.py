@@ -18,4 +18,4 @@ from .parameter_estimator import (
     ParameterEstimator,
     EstimatorResult,
 )
-from .timeseries_data import TimeSeriesData
+from ..utils.timeseries_data import TimeSeriesData

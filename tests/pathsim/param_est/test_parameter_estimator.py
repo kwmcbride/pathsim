@@ -25,7 +25,7 @@ from pathsim.opt.parameter_estimator import (
     block_param_to_var,   # internal helper — tested directly
     free_param_to_var,    # internal helper — tested directly
 )
-from pathsim.opt.timeseries_data import TimeSeriesData
+from pathsim.utils.timeseries_data import TimeSeriesData
 
 
 # ═══════════════════════════════════════════════════════════════════════════

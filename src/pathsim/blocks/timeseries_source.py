@@ -16,7 +16,7 @@ from typing import Literal, Sequence
 import numpy as np
 
 from ..blocks._block import Block
-from ..opt.timeseries_data import TimeSeriesData
+from ..utils.timeseries_data import TimeSeriesData
 
 
 ExtrapolationMode = Literal["hold", "nan", "error"]
