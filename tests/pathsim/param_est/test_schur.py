@@ -349,6 +349,30 @@ class TestSingleExperimentNoLocals(unittest.TestCase):
         self.assertIsNone(sens.schur)
 
 
+class TestFitNestedNoGlobals(unittest.TestCase):
+    """fit_nested() must raise ValueError when no global parameters are registered."""
+
+    def test_raises_when_no_globals(self):
+        source = Source(func=lambda t: t)
+        amp    = Amplifier(gain=1.0)
+        scope  = Scope()
+        sim = Simulation(
+            [source, amp, scope],
+            [Connection(source[0], amp[0]), Connection(amp[0], scope[0])],
+            Solver=SSPRK22, dt=0.1, log=False,
+        )
+        t_meas = np.linspace(0.5, 3.0, 6)
+        meas   = TimeSeriesData(time=t_meas, data=2.0 * t_meas)
+        est = ParameterEstimator(simulator=sim)
+        est.add_local_block_parameter(
+            0, "Amplifier", "gain", value=1.0, bounds=(0.0, 10.0)
+        )
+        est.add_timeseries(meas, signal=scope[0])
+
+        with self.assertRaisesRegex(ValueError, "global"):
+            est.fit_nested()
+
+
 class TestSchurImport(unittest.TestCase):
     """SchurResult is importable from pathsim.opt."""
 

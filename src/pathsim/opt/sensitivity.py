@@ -23,14 +23,14 @@ def _build_stats(fim: np.ndarray) -> dict:
     covariance = np.linalg.pinv(fim)
     std_errors = np.sqrt(np.maximum(np.diag(covariance), 0.0))
 
-    corr = np.zeros((n_p, n_p))
+    corr = np.full((n_p, n_p), np.nan)
     for i in range(n_p):
         for j in range(n_p):
             denom = std_errors[i] * std_errors[j]
             if denom > 0.0:
                 corr[i, j] = covariance[i, j] / denom
             elif i == j:
-                corr[i, j] = 1.0
+                corr[i, j] = 1.0          # diagonal undefined → 1.0 by convention
 
     eigenvalues, eigenvectors = np.linalg.eigh(fim)
     idx = np.argsort(eigenvalues)[::-1]
@@ -131,9 +131,13 @@ def _plot_correlation_and_eigenvalues(
     for i in range(n_p):
         for j in range(n_p):
             v = correlation[i, j]
-            color = "white" if abs(v) > 0.65 else "black"
-            ax.text(j, i, f"{v:.2f}", ha="center", va="center",
-                    fontsize=8, color=color)
+            if np.isnan(v):
+                ax.text(j, i, "N/A", ha="center", va="center",
+                        fontsize=7, color="black")
+            else:
+                color = "white" if abs(v) > 0.65 else "black"
+                ax.text(j, i, f"{v:.2f}", ha="center", va="center",
+                        fontsize=8, color=color)
 
     # ── FIM eigenvalue spectrum ────────────────────────────────────────
     ax2   = axes[1]

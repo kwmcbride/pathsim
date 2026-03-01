@@ -1551,9 +1551,10 @@ class ParameterEstimator:
         bounds : (lower, upper), optional
             Bounds in optimizer space; extracted from parameters by default.
         loss : str
-            Loss function for ``scipy.optimize.least_squares``
+            Robust loss function for ``scipy.optimize.least_squares``
             (``"linear"``, ``"soft_l1"``, ``"huber"``, ``"cauchy"``,
-            ``"arctan"``).  Ignored for ``minimize`` methods.
+            ``"arctan"``).  **Only used when** ``method="least_squares"``;
+            ignored for all ``scipy.optimize.minimize`` methods.
             Use ``"linear"`` (default) when measurements have Gaussian noise.
             Use ``"soft_l1"`` or ``"huber"`` when the data contains outliers.
         f_scale : float
@@ -1609,14 +1610,14 @@ class ParameterEstimator:
 
         _CONSTRAINT_METHODS = {"SLSQP", "trust-constr", "COBYLA"}
 
+        if constraints is not None and method not in _CONSTRAINT_METHODS:
+            raise ValueError(
+                f"Method '{method}' does not support general constraints. "
+                "Supported constraint methods: 'SLSQP', 'trust-constr', 'COBYLA'."
+            )
+
         # ── least_squares path ────────────────────────────────────────────────
         if method == "least_squares":
-            if constraints is not None:
-                raise ValueError(
-                    "least_squares does not support general constraints. "
-                    "Use method='SLSQP' or 'trust-constr' instead."
-                )
-
             res = sci_opt.least_squares(
                 self.residuals,
                 x0=x0_arr,
@@ -1636,12 +1637,6 @@ class ParameterEstimator:
             )
 
         # ── scipy.optimize.minimize path ─────────────────────────────────────
-        if constraints is not None and method not in _CONSTRAINT_METHODS:
-            raise ValueError(
-                f"Method '{method}' does not support general constraints. "
-                "Use 'SLSQP', 'trust-constr', or 'COBYLA'."
-            )
-
         bounds_list = list(zip(bounds_arr[0], bounds_arr[1]))
 
         def objective(xk: np.ndarray) -> float:
@@ -1685,6 +1680,8 @@ class ParameterEstimator:
         eps: float | None = None,
         loss: str = "linear",
         f_scale: float = 1.0,
+        outer_method: str = "least_squares",
+        outer_constraints: "list[dict] | None" = None,
         verbose: int = 0,
     ) -> "EstimatorResult":
         """Bilevel nested Schur optimization for multi-experiment problems.
@@ -1739,9 +1736,26 @@ class ParameterEstimator:
             Defaults to ``√(machine epsilon) ≈ 1.5e-8``.
         loss : str
             Robust loss for the outer problem (``"linear"``, ``"soft_l1"``,
-            ``"huber"``, …).
+            ``"huber"``, …).  **Only used when** ``outer_method="least_squares"``.
         f_scale : float
             Residual scale for robust outer loss.
+            **Only used when** ``outer_method="least_squares"``.
+        outer_method : str
+            Outer optimizer.  ``"least_squares"`` (default) uses
+            ``scipy.optimize.least_squares`` (trust-region reflective) and
+            supports ``loss`` / ``f_scale``.  Any
+            ``scipy.optimize.minimize`` method string (e.g.
+            ``"trust-constr"``, ``"trust-ncg"``, ``"L-BFGS-B"``) switches
+            to the minimize path, where the outer objective is
+            ``½‖r_red‖²`` with gradient ``J_red^T r_red`` and (for
+            Hessian-based methods) the Gauss-Newton approximation
+            ``J_red^T J_red``.  Use ``"trust-constr"`` when nonlinear
+            constraints on the global parameters are required.
+        outer_constraints : list of dict, optional
+            Constraint definitions passed directly to
+            ``scipy.optimize.minimize``.  Only supported for
+            ``"SLSQP"``, ``"trust-constr"``, and ``"COBYLA"``.  Ignored
+            when ``outer_method="least_squares"``.
         verbose : int
             0 = silent, 1 = print outer cost each iteration, 2 = full scipy
             output.
@@ -1914,18 +1928,65 @@ class ParameterEstimator:
             _ensure(x_G); return _cache["J"]
 
         # ── Run outer optimisation ───────────────────────────────────────────
-        outer_res = sci_opt.least_squares(
-            _outer_fun,
-            x0=x_G0,
-            jac=_outer_jac,
-            bounds=(x_G_lo, x_G_hi),
-            loss=loss,
-            f_scale=float(f_scale),
-            max_nfev=max_outer_nfev,
-            verbose=max(0, verbose - 1),
-        )
+        if outer_method == "least_squares":
+            outer_res = sci_opt.least_squares(
+                _outer_fun,
+                x0=x_G0,
+                jac=_outer_jac,
+                bounds=(x_G_lo, x_G_hi),
+                loss=loss,
+                f_scale=float(f_scale),
+                max_nfev=max_outer_nfev,
+                verbose=max(0, verbose - 1),
+            )
+            x_G_opt     = outer_res.x
+            outer_cost    = float(outer_res.cost)
+            outer_nfev    = int(outer_res.nfev)
+            outer_success = bool(outer_res.success)
+            outer_message = str(outer_res.message)
 
-        x_G_opt = outer_res.x
+        else:
+            # ── minimize path: scalar ½‖r_red‖² with GN gradient/Hessian ──
+            def _scalar_obj(x_G: np.ndarray) -> float:
+                r = _outer_fun(x_G)
+                return float(0.5 * np.dot(r, r))
+
+            def _scalar_grad(x_G: np.ndarray) -> np.ndarray:
+                r = _outer_fun(x_G)
+                J = _outer_jac(x_G)
+                return J.T @ r
+
+            def _gn_hess(x_G: np.ndarray) -> np.ndarray:
+                J = _outer_jac(x_G)
+                return J.T @ J
+
+            _HESS_METHODS   = {"trust-ncg", "trust-exact", "trust-krylov"}
+            _DISP_METHODS   = {"SLSQP", "trust-constr", "COBYLA",
+                                "Nelder-Mead", "Powell"}
+
+            opts: dict = {"maxiter": int(max_outer_nfev)}
+            if verbose > 0 and outer_method in _DISP_METHODS:
+                opts["disp"] = True
+
+            minimize_kwargs: dict = dict(
+                fun=_scalar_obj,
+                x0=x_G0,
+                jac=_scalar_grad,
+                method=outer_method,
+                bounds=list(zip(x_G_lo, x_G_hi)),
+                constraints=outer_constraints,
+                options=opts,
+            )
+            if outer_method in _HESS_METHODS:
+                minimize_kwargs["hess"] = _gn_hess
+
+            outer_res     = sci_opt.minimize(**minimize_kwargs)
+            x_G_opt       = outer_res.x
+            r_final       = _outer_fun(x_G_opt)
+            outer_cost    = float(0.5 * np.dot(r_final, r_final))
+            outer_nfev    = int(getattr(outer_res, "nfev", max_outer_nfev))
+            outer_success = bool(outer_res.success)
+            outer_message = str(outer_res.message)
 
         # Ensure x_Ls is consistent with the converged x_G_opt
         _ensure(x_G_opt)
@@ -1938,10 +1999,10 @@ class ParameterEstimator:
 
         return EstimatorResult(
             x=x_full,
-            cost=float(outer_res.cost),
-            nfev=int(outer_res.nfev),
-            success=bool(outer_res.success),
-            message=str(outer_res.message),
+            cost=outer_cost,
+            nfev=outer_nfev,
+            success=outer_success,
+            message=outer_message,
         )
 
 
@@ -2103,6 +2164,11 @@ class ParameterEstimator:
         print("Parameter Estimation Results")
         print("=" * 60)
 
+        all_params = list(self.global_parameters)
+        for lp in self.local_parameters:
+            all_params.extend(lp)
+        col_w = max((len(p.name) for p in all_params), default=20) + 2
+
         def _fmt(p: Parameter) -> None:
             val = p()
             lo, hi = p.bounds
@@ -2114,11 +2180,9 @@ class ParameterEstimator:
                 else ""
             )
             if p.transform is not None:
-                print(
-                    f"  {p.name:32s}  x={p.value:.6g}  ->  {val:.6g}{bounds_s}"
-                )
+                print(f"  {p.name:{col_w}s}  x={p.value:.6g}  ->  {val:.6g}{bounds_s}")
             else:
-                print(f"  {p.name:32s}  = {val:.6g}{bounds_s}")
+                print(f"  {p.name:{col_w}s}  = {val:.6g}{bounds_s}")
 
         if self.global_parameters:
             print("\nGlobal parameters:")
