@@ -120,6 +120,8 @@ class BusSelector(Block):
         self.outputs = Register(mapping=self.output_port_labels, dtype=object)
         # Keys that have already triggered a missing-key warning (warn once per key)
         self._warned_missing = set()
+        # Logger — replaced by Simulation with sim.logger so PathView sees it
+        self._logger = _log
 
 
     def __repr__(self):
@@ -137,7 +139,7 @@ class BusSelector(Block):
             # transient value during the first FPI iteration before the upstream
             # BusCreator has run.  Anything else is a likely mis-connection.
             if bus != 0:
-                _log.warning(
+                self._logger.warning(
                     "BusSelector received a non-dict input of type %r. "
                     "Expected a bus dict from a BusCreator. "
                     "Check that the connected output port carries a bus signal.",
@@ -159,7 +161,7 @@ class BusSelector(Block):
                     val = 0.0
                     break
             if missing and key not in self._warned_missing:
-                _log.warning(
+                self._logger.warning(
                     "BusSelector: key %r not found in bus. "
                     "Top-level keys available: %s. Defaulting to 0.0.",
                     key, list(bus.keys()),
@@ -219,6 +221,8 @@ class BusMerge(Block):
         self.outputs = Register(mapping=self.output_port_labels, dtype=object)
         # Keys that have already triggered a conflict warning (warn once per key)
         self._warned_conflicts = set()
+        # Logger — replaced by Simulation with sim.logger so PathView sees it
+        self._logger = _log
 
 
     def __repr__(self):
@@ -256,7 +260,7 @@ class BusMerge(Block):
                         continue   # keep existing value
                     elif self.on_conflict == 'warn':
                         if key not in self._warned_conflicts:
-                            _log.warning(
+                            self._logger.warning(
                                 "BusMerge: key %r appears in multiple input buses. "
                                 "bus_%s value will be used (last wins).",
                                 key, i,
@@ -340,6 +344,8 @@ class BusFunction(Block):
         self.inputs  = Register(mapping=self.input_port_labels,  dtype=object)
         self.outputs = Register(mapping=self.output_port_labels, dtype=object)
         self._warned_missing = set()
+        # Logger — replaced by Simulation with sim.logger so PathView sees it
+        self._logger = _log
 
 
     def __repr__(self):
@@ -360,7 +366,7 @@ class BusFunction(Block):
         bus = self.inputs['bus']
         if not isinstance(bus, dict):
             if bus != 0:
-                _log.warning(
+                self._logger.warning(
                     "BusFunction received a non-dict input of type %r. "
                     "Expected a bus dict from a BusCreator. "
                     "Check that the connected output port carries a bus signal.",
@@ -385,7 +391,7 @@ class BusFunction(Block):
                     val = 0.0
                     break
             if missing and key not in self._warned_missing:
-                _log.warning(
+                self._logger.warning(
                     "BusFunction: key %r not found in bus. "
                     "Top-level keys available: %s. Defaulting to 0.0.",
                     key, list(bus.keys()),

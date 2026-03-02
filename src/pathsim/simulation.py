@@ -682,8 +682,27 @@ class Simulation:
                 )
             )
 
+        #inject simulation logger into bus blocks so PathView's log panel sees them
+        self._inject_logger_into_blocks(self.blocks)
+
         #check bus schemas on direct BusCreator → BusSelector connections
         self._check_bus_schemas()
+
+
+    def _inject_logger_into_blocks(self, blocks):
+        """Set _logger on any block (or nested Subsystem block) that declares it.
+
+        Bus blocks (BusSelector, BusFunction, BusMerge) default their _logger to
+        the module-level pathsim.blocks.buses logger.  By replacing it with
+        self.logger (pathsim.simulation), their runtime warnings flow through the
+        same logger that PathView hooks into.
+        """
+        from .subsystem import Subsystem
+        for block in blocks:
+            if hasattr(block, '_logger'):
+                block._logger = self.logger
+            if isinstance(block, Subsystem):
+                self._inject_logger_into_blocks(block.blocks)
 
 
     # topological checks ----------------------------------------------------------
