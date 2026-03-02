@@ -10,4 +10,8 @@ from .connection import Connection, Duplex
 from .bus import Bus, BusElement
 from .subsystem import Subsystem, Interface
 from .utils.logger import LoggerManager
-from .bus import Bus, BusElement
+from .blocks.buses import BusCreator, BusSelector, BusMerge, BusFunction
+
+# PathView generates BusConnection for bus-carrying wires; it behaves
+# identically to Connection at runtime.
+BusConnection = Connection

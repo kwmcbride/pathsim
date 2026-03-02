@@ -23,6 +23,79 @@ from ..utils.deprecation import deprecated
 from .._constants import COLORS_ALL
 
 
+# BUS HELPERS ===========================================================================
+
+def _bus_leaf_paths(bus, prefix=''):
+    """Yield ``(path, BusElement)`` for every leaf element of *bus*, depth-first.
+
+    Parameters
+    ----------
+    bus : Bus
+        Bus definition to traverse.
+    prefix : str
+        Dot-separated path prefix (used for recursion).
+
+    Yields
+    ------
+    tuple[str, BusElement]
+    """
+    for elem in bus.elements:
+        path = f"{prefix}.{elem.name}" if prefix else elem.name
+        if elem.is_nested():
+            yield from _bus_leaf_paths(elem.data_type, path)
+        else:
+            yield path, elem
+
+
+def _dict_leaf_paths(d, prefix=''):
+    """Yield ``(path, value)`` for every leaf in a nested dict, depth-first.
+
+    Parameters
+    ----------
+    d : dict
+        Bus dict to traverse.
+    prefix : str
+        Dot-separated path prefix (used for recursion).
+
+    Yields
+    ------
+    tuple[str, object]
+    """
+    for key, val in d.items():
+        path = f"{prefix}.{key}" if prefix else key
+        if isinstance(val, dict):
+            yield from _dict_leaf_paths(val, path)
+        else:
+            yield path, val
+
+
+def _flatten_bus(bus_dict, paths):
+    """Extract scalar values from *bus_dict* using ordered dot-path *paths*.
+
+    Parameters
+    ----------
+    bus_dict : dict
+        Nested bus dict.
+    paths : list[str]
+        Ordered list of dot-separated key paths.
+
+    Returns
+    -------
+    list[float]
+        Scalar value for each path; missing keys default to ``0.0``.
+    """
+    result = []
+    for path in paths:
+        val = bus_dict
+        for part in path.split('.'):
+            val = val.get(part, 0.0) if isinstance(val, dict) else 0.0
+        try:
+            result.append(float(val))
+        except (TypeError, ValueError):
+            result.append(0.0)
+    return result
+
+
 # BLOCKS FOR DATA RECORDING =============================================================
 
 class Scope(Block):
@@ -64,7 +137,7 @@ class Scope(Block):
     input_port_labels = None
     output_port_labels = {}
 
-    def __init__(self, sampling_period=None, t_wait=0.0, labels=None):
+    def __init__(self, sampling_period=None, t_wait=0.0, labels=None, bus=None):
         super().__init__()
 
         #time delay until start recording
@@ -83,12 +156,28 @@ class Scope(Block):
         #initial index for incremental reading
         self._incremental_idx = 0
 
+        # Bus-aware recording.
+        # _bus_ports maps port index -> [leaf-path strings] for bus-carrying ports.
+        # None means "not yet configured" (lazy detection will fill it on first
+        # object-dtype sample).  Pre-configured by bus= at construction time.
+        self._bus = bus
+        self._bus_ports = None  # type: dict[int, list[str]] | None
+
+        if bus is not None:
+            path_leaf = list(_bus_leaf_paths(bus))
+            self._bus_ports = {0: [p for p, _ in path_leaf]}
+            if not self.labels:
+                self.labels = [
+                    f"{p} [{e.unit}]" if e.unit else p
+                    for p, e in path_leaf
+                ]
+
         #sampling produces discrete time behavior
         if not (sampling_period is None):
 
             #flag to indicate this is a timestep to sample
             self._sample_next_timestep = False
-            
+
             #internal scheduled list event
             def _sample(t):
                 self._sample_next_timestep = True
@@ -171,6 +260,60 @@ class Scope(Block):
                 )
 
 
+    def _collect_row(self):
+        """Read all input ports and return a flat list of scalars.
+
+        Bus dicts on any port are expanded to their leaf scalar values in
+        depth-first order.  Plain scalar ports pass through unchanged.
+
+        Returns
+        -------
+        numpy.ndarray or list[float]
+            One scalar value per recorded channel.
+        """
+        raw = self.inputs.to_array()
+
+        # Fast path: no bus signals present
+        if raw.dtype != object:
+            return raw
+
+        # Lazy configuration: first call with object-dtype inputs.
+        # Walk the current values to discover which ports carry dicts.
+        if self._bus_ports is None:
+            discovered = {}
+            for i, val in enumerate(raw):
+                if isinstance(val, dict):
+                    discovered[i] = [p for p, _ in _dict_leaf_paths(val)]
+            if discovered:
+                self._bus_ports = discovered
+                # Auto-derive labels if the user didn't supply any
+                if not self.labels:
+                    lbs = []
+                    for i, val in enumerate(raw):
+                        if i in self._bus_ports:
+                            lbs.extend(self._bus_ports[i])
+                        else:
+                            lbs.append(f"port {i}")
+                    self.labels = lbs
+            else:
+                # No dicts yet (FPI transient — all ports still hold zero).
+                # Return zeros with the correct length so recording stays
+                # consistent; proper expansion happens on the next sample.
+                return np.zeros(len(raw))
+
+        # Collect scalars, expanding bus dicts using the configured paths
+        row = []
+        for i, val in enumerate(raw):
+            if i in self._bus_ports and isinstance(val, dict):
+                row.extend(_flatten_bus(val, self._bus_ports[i]))
+            else:
+                try:
+                    row.append(float(val))
+                except (TypeError, ValueError):
+                    row.append(0.0)
+        return row
+
+
     def sample(self, t, dt):
         """Sample the data from all inputs. Skips duplicate timestamps to maintain
         unique time points in the recording.
@@ -200,7 +343,7 @@ class Scope(Block):
             return
 
         self.recording_time.append(t)
-        self.recording_data.append(self.inputs.to_array())
+        self.recording_data.append(self._collect_row())
 
 
     def plot(self, *args, **kwargs):
@@ -526,5 +669,5 @@ class RealtimeScope(Scope):
             evaluation time for sampling
         """
         if (self.sampling_period is None):
-            self.plotter.update(t, self.inputs.to_array())
+            self.plotter.update(t, self._collect_row())
             super().sample(t, dt)

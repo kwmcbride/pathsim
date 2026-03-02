@@ -15,6 +15,27 @@ import numpy as np
 from .anderson import Anderson
 
 
+# HELPERS ===============================================================================
+
+def _collect_leaves(val, out):
+    """Recursively collect all leaf float values from a bus dict into *out*."""
+    if isinstance(val, dict):
+        for v in val.values():
+            _collect_leaves(v, out)
+    else:
+        try:
+            out.append(float(val))
+        except (TypeError, ValueError):
+            out.append(0.0)
+
+
+def _flatten_bus_to_array(d):
+    """Return a 1-D float64 array of all leaf values in bus dict *d*."""
+    leaves = []
+    _collect_leaves(d, leaves)
+    return np.array(leaves, dtype=float)
+
+
 # CLASS =================================================================================
 
 class ConnectionBooster:
@@ -42,6 +63,12 @@ class ConnectionBooster:
 
         # initialize optimizer (default args)
         self.accelerator = Anderson()
+
+        # flat float64 snapshot of the previous bus-signal iteration (None for scalars)
+        self._bus_history = None
+
+        # tristate flag: None = not yet determined, True = bus, False = scalar
+        self._is_bus = None
 
 
     def __bool__(self):
@@ -75,25 +102,51 @@ class ConnectionBooster:
 
 
     def reset(self):
-        """Reset the internal fixed point accelerator and update the history 
+        """Reset the internal fixed point accelerator and update the history
         to the most recent value
         """
         self.accelerator.reset()
         self.history = self.get()
+        self._bus_history = None
+        self._is_bus = None
 
 
     def update(self):
-        """Wraps the `Connection.update` method for data transfer from source 
-        to targets and injects a solver step of the fixed point accelerator, 
-        updates the history required for the next solver step, returns the 
+        """Wraps the `Connection.update` method for data transfer from source
+        to targets and injects a solver step of the fixed point accelerator,
+        updates the history required for the next solver step, returns the
         fixed point residual.
+
+        For bus signals (object-dtype outputs carrying a dict) Anderson
+        acceleration is not applicable.  The method falls back to plain
+        fixed-point pass-through and measures convergence as the max
+        absolute change in any leaf value across iterations.
 
         Returns
         -------
         res : float
-            fixed point residual of internal lixed point accelerator
+            fixed point residual of internal fixed point accelerator
         """
-        _val, res = self.accelerator.step(self.history, self.get())
+        current = self.get()
+
+        # Determine connection type on the first call after init/reset.
+        if self._is_bus is None:
+            self._is_bus = current.dtype == object and isinstance(current.flat[0], dict)
+
+        if self._is_bus:
+            # Bus signal: Anderson acceleration is not applicable.
+            # Plain pass-through; convergence measured as max leaf-value change.
+            new_flat = _flatten_bus_to_array(current.flat[0])
+            if self._bus_history is None or self._bus_history.shape != new_flat.shape:
+                res = float('inf')
+            else:
+                res = float(np.max(np.abs(new_flat - self._bus_history)))
+            self._bus_history = new_flat   # snapshot before next in-place mutation
+            self.set(current)
+            return res
+
+        # Normal scalar / array path — Anderson acceleration.
+        _val, res = self.accelerator.step(self.history, current)
         self.set(_val)
         self.history = _val
         return res

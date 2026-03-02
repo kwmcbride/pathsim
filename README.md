@@ -37,6 +37,7 @@ Minimal dependencies: just `numpy`, `scipy`, and `matplotlib`.
 - **Event handling** — zero-crossing detection for hybrid systems
 - **Hierarchical** — nest subsystems for modular designs
 - **Extensible** — subclass `Block` to create custom components
+- **Structured buses** — group signals into named buses that flow through closed-loop diagrams
 
 ## Install
 
@@ -79,6 +80,43 @@ sim = Simulation(
 sim.run(30)
 scp.plot()
 ```
+
+## Structured Buses
+
+PathSim lets you group signals into named, typed buses that travel through your diagram as a single wire — just like Simulink bus signals.
+
+```python
+from pathsim import Simulation, Connection, Bus, BusElement
+from pathsim import BusCreator, BusSelector, BusFunction
+
+# Define a typed bus schema
+sensor_bus = Bus('sensors', elements=[
+    BusElement('Temperature', unit='C'),
+    BusElement('Humidity',    unit='%RH'),
+])
+
+# Pack signals into a bus
+creator = BusCreator(sensor_bus)
+
+# Transform bus signals in-place (avoids BusSelector + blocks + BusCreator boilerplate)
+converter = BusFunction(
+    func=lambda T, H: (T * 1.8 + 32, H / 100.0),
+    in_keys=['Temperature', 'Humidity'],
+    out_keys=['Temperature_F', 'Humidity_fraction'],
+)
+
+# Extract individual signals from a bus
+selector = BusSelector(['Temperature_F', 'Humidity_fraction'])
+```
+
+| Block | Purpose |
+|-------|---------|
+| `BusCreator(keys)` | Pack N named inputs into one bus signal |
+| `BusSelector(keys)` | Extract named signals from a bus (dot-notation for nested buses) |
+| `BusMerge(n)` | Merge N buses into one |
+| `BusFunction(func, in_keys, out_keys)` | Apply a callable to selected bus signals |
+
+Buses are plain Python `dict`s at runtime, so they pass transparently through `Subsystem` boundaries, `Scope` blocks (with auto-labelling), and algebraic loops.
 
 ## PathView
 

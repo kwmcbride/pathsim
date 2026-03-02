@@ -45,6 +45,21 @@ from .events._event import Event
 from .connection import Connection
 
 
+# MODULE HELPERS ========================================================================
+
+def _bus_valid_paths(struct, prefix=''):
+    """Yield every valid dot-path key in a ``Bus.structure_dict()`` result.
+
+    Leaf entries (dicts containing a ``'data_type'`` key) are not recursed
+    into; their path is yielded as-is.  Nested bus entries are recursed.
+    """
+    for key, val in struct.items():
+        path = f'{prefix}.{key}' if prefix else key
+        yield path
+        if isinstance(val, dict) and 'data_type' not in val:
+            yield from _bus_valid_paths(val, path)
+
+
 # TRANSIENT SIMULATION CLASS ============================================================
 
 class Simulation:
@@ -498,6 +513,51 @@ class Simulation:
 
     # system assembly -------------------------------------------------------------
 
+    def _check_bus_schemas(self):
+        """Warn when a BusCreator output is directly wired to a BusSelector
+        that requests keys absent from the creator's schema.
+
+        Only direct BusCreator → BusSelector connections are checked;
+        indirect paths through BusMerge or other blocks cannot be
+        validated statically.
+        """
+        from .blocks.buses import BusCreator, BusSelector
+
+        for conn in self.connections:
+            src = conn.source.block
+            if not isinstance(src, BusCreator):
+                continue
+
+            for trg_ref in conn.targets:
+                tgt = trg_ref.block
+                if not isinstance(tgt, BusSelector):
+                    continue
+
+                # Build the set of valid dot-paths from the creator's schema.
+                if src.bus is not None:
+                    valid = set(_bus_valid_paths(src.bus.structure_dict()))
+                else:
+                    # Plain string keys — only top-level paths are known.
+                    valid = set(src.keys)
+
+                # For plain-key creators, a dot-path selector like 'a.b'
+                # is only checkable at the top level.
+                if src.bus is None:
+                    missing = [
+                        k for k in tgt.keys
+                        if k.split('.')[0] not in valid
+                    ]
+                else:
+                    missing = [k for k in tgt.keys if k not in valid]
+
+                if missing:
+                    self.logger.warning(
+                        f"Bus schema mismatch: {src!r} → {tgt!r}: "
+                        f"key(s) {missing!r} not in bus schema {src.keys!r}. "
+                        f"BusSelector will default to 0.0 for missing keys at runtime."
+                    )
+
+
     def _assemble_graph(self):
         """Build the internal graph representation for fast system function
         evaluation and algebraic loop resolution.
@@ -533,6 +593,9 @@ class Simulation:
                 *self.graph.size, *self.graph.depth, T
                 )
             )
+
+        #check bus schemas on direct BusCreator → BusSelector connections
+        self._check_bus_schemas()
 
 
     # topological checks ----------------------------------------------------------

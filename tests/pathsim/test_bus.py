@@ -1,5 +1,8 @@
+import logging
+import warnings
+
 from pathsim.bus import Bus, BusElement
-from pathsim.blocks import BusCreator, BusSelector, Constant, Scope
+from pathsim.blocks import BusCreator, BusSelector, BusMerge, BusFunction, Constant, Scope
 from pathsim import Simulation, Connection, Interface, Subsystem
 from pathsim.solvers import SSPRK22
 
@@ -209,7 +212,7 @@ def test_bus_flat():
     assert bus.get_element('Speed') == speed
     assert bus.get_element('Status') == status
     assert bus.get_element('Missing') is None
-    assert bus.get_element_names == ['Speed', 'Status']
+    assert bus.element_names == ['Speed', 'Status']
     assert bus.validate({'Speed': 1.0, 'Status': 2})
     assert bus.get_leaf_elements() == [speed, status]
 
@@ -278,3 +281,904 @@ def test_validate_missing_element():
     with pytest.raises(ValueError):
         bus.validate({'B': 1.0})
 
+
+# =============================================================================
+# Critical fix tests
+# =============================================================================
+
+def test_bus_element_unit_default_is_empty_string():
+    elem = BusElement('x')
+    assert elem.unit == ''
+    assert elem.description == ''
+
+
+def test_bus_creator_repr_with_bus():
+    bus_def = Bus('sensors', elements=[BusElement('x'), BusElement('y')])
+    creator = BusCreator(keys=bus_def)
+    r = repr(creator)
+    assert 'BusCreator' in r and 'sensors' in r and 'x' in r
+
+
+def test_bus_creator_repr_plain_keys():
+    creator = BusCreator(keys=['a', 'b'])
+    r = repr(creator)
+    assert 'BusCreator' in r and 'a' in r and 'b' in r
+
+
+def test_bus_selector_repr():
+    selector = BusSelector(keys=['Speed', 'Sensors.Temp'])
+    r = repr(selector)
+    assert 'BusSelector' in r and 'Speed' in r and 'Sensors.Temp' in r
+
+
+def test_bus_element_equality():
+    e1 = BusElement('Speed', data_type='float', unit='km/h')
+    e2 = BusElement('Speed', data_type='float', unit='km/h')
+    assert e1 == e2
+
+
+def test_bus_element_inequality():
+    e1 = BusElement('Speed', data_type='float', unit='km/h')
+    e2 = BusElement('Speed', data_type='float', unit='mph')
+    assert e1 != e2
+
+
+def test_bus_equality():
+    b1 = Bus('vehicle', elements=[BusElement('Speed'), BusElement('Status', data_type='int')])
+    b2 = Bus('vehicle', elements=[BusElement('Speed'), BusElement('Status', data_type='int')])
+    assert b1 == b2
+
+
+def test_bus_inequality_name():
+    b1 = Bus('a', elements=[BusElement('x')])
+    b2 = Bus('b', elements=[BusElement('x')])
+    assert b1 != b2
+
+
+def test_bus_inequality_elements():
+    b1 = Bus('bus', elements=[BusElement('x')])
+    b2 = Bus('bus', elements=[BusElement('y')])
+    assert b1 != b2
+
+
+def test_bus_nested_equality():
+    inner1 = Bus('inner', elements=[BusElement('x'), BusElement('y')])
+    inner2 = Bus('inner', elements=[BusElement('x'), BusElement('y')])
+    e1 = BusElement('sub', data_type=inner1)
+    e2 = BusElement('sub', data_type=inner2)
+    assert e1 == e2
+
+
+def test_bus_creator_reset_clears_output():
+    creator = BusCreator(keys=['x', 'y'])
+    creator.inputs['x'] = 1.0
+    creator.inputs['y'] = 2.0
+    creator.update()
+    assert isinstance(creator.outputs['bus'], dict)
+    creator.reset()
+    assert creator.outputs['bus'] == 0
+
+
+def test_bus_selector_reset_clears_output_and_warnings():
+    selector = BusSelector(keys=['a', 'missing'])
+    selector.inputs['bus'] = {'a': 5.0}
+    with pytest.warns(UserWarning):
+        selector.update()
+    assert 'missing' in selector._warned_missing
+    selector.reset()
+    # After reset: outputs zeroed, warning state cleared
+    assert selector.outputs['a'] == 0
+    assert len(selector._warned_missing) == 0
+
+
+def test_bus_element_valid_data_type():
+    # Known types should not warn
+    for dtype in ('float', 'int', 'uint64', 'bool', 'complex'):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            BusElement('x', data_type=dtype)
+
+
+def test_bus_element_bus_data_type_no_warn():
+    inner = Bus('inner', elements=[BusElement('a')])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        BusElement('nested', data_type=inner)
+
+
+def test_bus_element_invalid_data_type_warns():
+    with pytest.warns(UserWarning, match="unrecognised data_type"):
+        BusElement('x', data_type='FancyType')
+
+
+def test_bus_element_non_string_data_type_warns():
+    with pytest.warns(UserWarning, match="unrecognised data_type"):
+        BusElement('x', data_type=42)
+
+
+def test_validate_recursive_nested_bus():
+    inner = Bus('inner', elements=[BusElement('x'), BusElement('y')])
+    outer = Bus('outer', elements=[BusElement('val'), BusElement('inner', data_type=inner)])
+    # Valid nested structure
+    assert outer.validate({'val': 1.0, 'inner': {'x': 2.0, 'y': 3.0}})
+
+
+def test_validate_nested_receives_scalar():
+    inner = Bus('inner', elements=[BusElement('x')])
+    outer = Bus('outer', elements=[BusElement('inner', data_type=inner)])
+    with pytest.raises(ValueError, match="nested Bus"):
+        outer.validate({'inner': 42.0})
+
+
+def test_validate_nested_missing_key():
+    inner = Bus('inner', elements=[BusElement('x'), BusElement('y')])
+    outer = Bus('outer', elements=[BusElement('inner', data_type=inner)])
+    with pytest.raises(ValueError, match="inner.y"):
+        outer.validate({'inner': {'x': 1.0}})  # 'y' missing
+
+
+def test_bus_creator_duplicate_keys():
+    with pytest.raises(ValueError, match="[Dd]uplicate"):
+        BusCreator(keys=['x', 'y', 'x'])
+
+
+def test_bus_selector_duplicate_keys():
+    with pytest.raises(ValueError, match="[Dd]uplicate"):
+        BusSelector(keys=['a', 'b', 'a'])
+
+
+def test_duplicate_element_name_in_add_element():
+    bus = Bus('b', elements=[BusElement('Speed')])
+    with pytest.raises(ValueError, match="Speed"):
+        bus.add_element(BusElement('Speed'))
+
+
+def test_duplicate_element_name_in_init():
+    with pytest.raises(ValueError, match="Speed"):
+        Bus('b', elements=[BusElement('Speed'), BusElement('Speed')])
+
+
+def test_element_names_property():
+    speed = BusElement('Speed')
+    status = BusElement('Status')
+    bus = Bus('b', elements=[speed, status])
+    assert bus.element_names == ['Speed', 'Status']
+
+
+def test_get_element_names_deprecated():
+    bus = Bus('b', elements=[BusElement('A')])
+    with pytest.warns(DeprecationWarning, match="element_names"):
+        names = bus.get_element_names
+    assert names == ['A']
+
+
+def test_bus_connection_alias():
+    """BusConnection must be importable from pathsim and behave like Connection."""
+    from pathsim import BusConnection, Connection
+    assert BusConnection is Connection
+
+
+def test_bus_connection_works_in_simulation():
+    """PathView-generated BusConnection wires should run without error."""
+    from pathsim import Simulation, BusConnection
+    c1 = Constant(1.0)
+    c2 = Constant(2.0)
+    creator = BusCreator(keys=['a', 'b'])
+    selector = BusSelector(keys=['a', 'b'])
+    scope = Scope()
+    blocks = [c1, c2, creator, selector, scope]
+    connections = [
+        Connection(c1[0], creator['a']),
+        Connection(c2[0], creator['b']),
+        BusConnection(creator[0], selector[0]),
+        Connection(selector['a'], scope[0]),
+        Connection(selector['b'], scope[1]),
+    ]
+    sim = Simulation(blocks, connections, dt=0.1)
+    sim.run(duration=0.5)
+    t, y = scope.read()
+    assert all(v == 1.0 for v in y[0])
+    assert all(v == 2.0 for v in y[1])
+
+
+def test_bus_selector_warns_on_missing_key():
+    """BusSelector should emit UserWarning when a requested key is absent."""
+    selector = BusSelector(keys=['x', 'missing_key'])
+    selector.inputs['bus'] = {'x': 42.0}
+    with pytest.warns(UserWarning, match="missing_key"):
+        selector.update()
+    assert selector.outputs['x'] == 42.0
+    assert selector.outputs['missing_key'] == 0.0
+
+
+def test_bus_selector_warns_on_missing_key_only_once():
+    """Missing-key warning should fire only once per key, not every timestep."""
+    selector = BusSelector(keys=['ghost'])
+    selector.inputs['bus'] = {'x': 1.0}
+    with pytest.warns(UserWarning):
+        selector.update()
+    # Second call must NOT emit another warning
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        selector.update()  # would raise if a warning fires
+
+
+def test_bus_selector_warns_on_missing_nested_key():
+    """Dot-notation key miss should warn with the full key name."""
+    selector = BusSelector(keys=['Sensors.Temp'])
+    selector.inputs['bus'] = {'Sensors': {'Pressure': 101.0}}
+    with pytest.warns(UserWarning, match="Sensors.Temp"):
+        selector.update()
+    assert selector.outputs['Sensors.Temp'] == 0.0
+
+
+def test_bus_selector_warns_on_non_dict_input():
+    """BusSelector should warn when the bus input is not a dict (and not the FPI zero)."""
+    selector = BusSelector(keys=['x'])
+    selector.inputs['bus'] = 'wrong_type'
+    with pytest.warns(UserWarning, match="non-dict"):
+        selector.update()
+
+
+def test_bus_selector_silent_on_fpi_zero():
+    """BusSelector must NOT warn when bus is 0 (the FPI initial state)."""
+    selector = BusSelector(keys=['x'])
+    selector.inputs['bus'] = 0  # FPI transient
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        selector.update()  # would raise if a warning fires
+
+
+def test_bus_circular_reference_get_leaf_elements():
+    """Circular Bus references must raise ValueError in get_leaf_elements."""
+    bus_a = Bus('a', elements=[])
+    bus_b = Bus('b', elements=[])
+    bus_a.add_element(BusElement('child', data_type=bus_b))
+    bus_b.add_element(BusElement('child', data_type=bus_a))
+    with pytest.raises(ValueError, match="[Cc]ircular"):
+        bus_a.get_leaf_elements()
+
+
+def test_bus_circular_reference_structure_dict():
+    """Circular Bus references must raise ValueError in structure_dict."""
+    bus_a = Bus('a', elements=[])
+    bus_b = Bus('b', elements=[])
+    bus_a.add_element(BusElement('child', data_type=bus_b))
+    bus_b.add_element(BusElement('child', data_type=bus_a))
+    with pytest.raises(ValueError, match="[Cc]ircular"):
+        bus_a.structure_dict()
+
+
+def test_bus_circular_reference_print_tree():
+    """Circular Bus references must raise ValueError in print_tree_structure."""
+    bus_a = Bus('a', elements=[])
+    bus_b = Bus('b', elements=[])
+    bus_a.add_element(BusElement('child', data_type=bus_b))
+    bus_b.add_element(BusElement('child', data_type=bus_a))
+    with pytest.raises(ValueError, match="[Cc]ircular"):
+        bus_a.print_tree_structure()
+
+
+def test_bus_self_reference():
+    """A Bus containing itself must raise ValueError."""
+    bus = Bus('self_ref', elements=[])
+    bus.add_element(BusElement('me', data_type=bus))
+    with pytest.raises(ValueError, match="[Cc]ircular"):
+        bus.get_leaf_elements()
+
+
+# =============================================================================
+# Bus-aware Scope tests (F1)
+# =============================================================================
+
+def test_scope_explicit_bus_labels():
+    """Scope(bus=) derives channel labels from Bus element names and units."""
+    bus_def = Bus('sensors', elements=[
+        BusElement('Temperature', unit='C'),
+        BusElement('Pressure', unit='kPa'),
+    ])
+    scope = Scope(bus=bus_def)
+    assert scope.labels == ['Temperature [C]', 'Pressure [kPa]']
+
+
+def test_scope_explicit_bus_labels_no_unit():
+    """Elements without a unit should appear without the unit bracket."""
+    bus_def = Bus('b', elements=[BusElement('x'), BusElement('y')])
+    scope = Scope(bus=bus_def)
+    assert scope.labels == ['x', 'y']
+
+
+def test_scope_explicit_bus_user_labels_not_overridden():
+    """When labels= is passed explicitly, bus= should not override them."""
+    bus_def = Bus('b', elements=[BusElement('x'), BusElement('y')])
+    scope = Scope(bus=bus_def, labels=['my_x', 'my_y'])
+    assert scope.labels == ['my_x', 'my_y']
+
+
+def test_scope_bus_direct_connection_flat():
+    """Scope with bus= records leaf scalars when a bus dict is connected directly."""
+    bus_def = Bus('b', elements=[BusElement('x'), BusElement('y')])
+    c1 = Constant(3.0)
+    c2 = Constant(7.0)
+    creator = BusCreator(keys=bus_def)
+    scope = Scope(bus=bus_def)
+
+    blocks = [c1, c2, creator, scope]
+    connections = [
+        Connection(c1[0], creator['x']),
+        Connection(c2[0], creator['y']),
+        Connection(creator[0], scope[0]),   # bus direct to Scope
+    ]
+    sim = Simulation(blocks, connections, dt=0.1)
+    sim.run(duration=0.5)
+
+    t, y = scope.read()
+    assert y.shape[0] == 2, f"Expected 2 channels, got {y.shape[0]}"
+    assert all(v == 3.0 for v in y[0]), f"x channel: {y[0]}"
+    assert all(v == 7.0 for v in y[1]), f"y channel: {y[1]}"
+
+
+def test_scope_bus_direct_connection_nested():
+    """Scope with nested bus= expands to all leaf elements in depth-first order."""
+    inner = Bus('inner', elements=[BusElement('a'), BusElement('b')])
+    outer = Bus('outer', elements=[
+        BusElement('val'),
+        BusElement('inner', data_type=inner),
+    ])
+
+    c_val = Constant(1.0)
+    c_a   = Constant(2.0)
+    c_b   = Constant(3.0)
+    inner_creator = BusCreator(keys=inner)
+    outer_creator = BusCreator(keys=outer)
+    scope = Scope(bus=outer)
+
+    blocks = [c_val, c_a, c_b, inner_creator, outer_creator, scope]
+    connections = [
+        Connection(c_a[0],   inner_creator['a']),
+        Connection(c_b[0],   inner_creator['b']),
+        Connection(c_val[0], outer_creator['val']),
+        Connection(inner_creator[0], outer_creator['inner']),
+        Connection(outer_creator[0], scope[0]),
+    ]
+    sim = Simulation(blocks, connections, dt=0.1)
+    sim.run(duration=0.5)
+
+    t, y = scope.read()
+    # Depth-first: val, inner.a, inner.b
+    assert y.shape[0] == 3, f"Expected 3 channels, got {y.shape[0]}"
+    assert all(v == 1.0 for v in y[0]), f"val: {y[0]}"
+    assert all(v == 2.0 for v in y[1]), f"inner.a: {y[1]}"
+    assert all(v == 3.0 for v in y[2]), f"inner.b: {y[2]}"
+
+
+def test_scope_lazy_bus_detection():
+    """Plain Scope() auto-detects a bus dict and expands channels lazily."""
+    bus_def = Bus('b', elements=[BusElement('p'), BusElement('q')])
+    c1 = Constant(10.0)
+    c2 = Constant(20.0)
+    creator = BusCreator(keys=bus_def)
+    scope = Scope()   # no bus= — lazy detection
+
+    blocks = [c1, c2, creator, scope]
+    connections = [
+        Connection(c1[0], creator['p']),
+        Connection(c2[0], creator['q']),
+        Connection(creator[0], scope[0]),
+    ]
+    sim = Simulation(blocks, connections, dt=0.1)
+    sim.run(duration=0.5)
+
+    t, y = scope.read()
+    assert y.shape[0] == 2, f"Expected 2 channels after lazy detection, got {y.shape[0]}"
+    assert all(v == 10.0 for v in y[0]), f"p: {y[0]}"
+    assert all(v == 20.0 for v in y[1]), f"q: {y[1]}"
+
+
+def test_scope_lazy_auto_labels():
+    """Lazy detection sets self.labels from the dict key paths."""
+    bus_def = Bus('b', elements=[BusElement('alpha'), BusElement('beta')])
+    creator = BusCreator(keys=bus_def)
+    c1 = Constant(1.0)
+    c2 = Constant(2.0)
+    scope = Scope()
+
+    blocks = [c1, c2, creator, scope]
+    connections = [
+        Connection(c1[0], creator['alpha']),
+        Connection(c2[0], creator['beta']),
+        Connection(creator[0], scope[0]),
+    ]
+    sim = Simulation(blocks, connections, dt=0.1)
+    sim.run(duration=0.5)
+
+    assert 'alpha' in scope.labels
+    assert 'beta' in scope.labels
+
+
+def test_busmerge_simulation_two_buses():
+    """BusMerge combines two buses end-to-end through a Simulation."""
+    bus_a = Bus('a', elements=[BusElement('x'), BusElement('y')])
+    bus_b = Bus('b', elements=[BusElement('z')])
+
+    ca1 = Constant(1.0)
+    ca2 = Constant(2.0)
+    cb1 = Constant(3.0)
+    creator_a = BusCreator(keys=bus_a)
+    creator_b = BusCreator(keys=bus_b)
+    merger    = BusMerge(n=2)
+    selector  = BusSelector(keys=['x', 'y', 'z'])
+    scope     = Scope()
+
+    blocks = [ca1, ca2, cb1, creator_a, creator_b, merger, selector, scope]
+    connections = [
+        Connection(ca1[0], creator_a['x']),
+        Connection(ca2[0], creator_a['y']),
+        Connection(cb1[0], creator_b['z']),
+        Connection(creator_a[0], merger['bus_0']),
+        Connection(creator_b[0], merger['bus_1']),
+        Connection(merger[0],    selector['bus']),
+        Connection(selector['x'], scope[0]),
+        Connection(selector['y'], scope[1]),
+        Connection(selector['z'], scope[2]),
+    ]
+    sim = Simulation(blocks, connections, dt=0.1)
+    sim.run(duration=0.5)
+
+    t, y = scope.read()
+    assert y.shape[0] == 3
+    assert all(v == 1.0 for v in y[0]), f"x: {y[0]}"
+    assert all(v == 2.0 for v in y[1]), f"y: {y[1]}"
+    assert all(v == 3.0 for v in y[2]), f"z: {y[2]}"
+
+
+def test_busmerge_simulation_direct_scope():
+    """BusMerge output fed directly into a bus-aware Scope."""
+    bus_a = Bus('a', elements=[BusElement('p'), BusElement('q')])
+    bus_b = Bus('b', elements=[BusElement('r')])
+    merged_bus = Bus('merged', elements=[BusElement('p'), BusElement('q'), BusElement('r')])
+
+    c1, c2, c3 = Constant(10.0), Constant(20.0), Constant(30.0)
+    creator_a = BusCreator(keys=bus_a)
+    creator_b = BusCreator(keys=bus_b)
+    merger    = BusMerge(n=2)
+    scope     = Scope(bus=merged_bus)
+
+    blocks = [c1, c2, c3, creator_a, creator_b, merger, scope]
+    connections = [
+        Connection(c1[0], creator_a['p']),
+        Connection(c2[0], creator_a['q']),
+        Connection(c3[0], creator_b['r']),
+        Connection(creator_a[0], merger['bus_0']),
+        Connection(creator_b[0], merger['bus_1']),
+        Connection(merger[0],    scope[0]),
+    ]
+    sim = Simulation(blocks, connections, dt=0.1)
+    sim.run(duration=0.5)
+
+    t, y = scope.read()
+    assert y.shape[0] == 3
+    assert all(v == 10.0 for v in y[0])
+    assert all(v == 20.0 for v in y[1])
+    assert all(v == 30.0 for v in y[2])
+
+
+def test_scope_bus_resets_correctly():
+    """After reset(), Scope with bus= records fresh data on second run."""
+    bus_def = Bus('b', elements=[BusElement('x'), BusElement('y')])
+    c1 = Constant(5.0)
+    c2 = Constant(6.0)
+    creator = BusCreator(keys=bus_def)
+    scope = Scope(bus=bus_def)
+
+    blocks = [c1, c2, creator, scope]
+    connections = [
+        Connection(c1[0], creator['x']),
+        Connection(c2[0], creator['y']),
+        Connection(creator[0], scope[0]),
+    ]
+    sim = Simulation(blocks, connections, dt=0.1)
+    sim.run(duration=0.5)
+    t1, y1 = scope.read()
+
+    sim.run(duration=0.5, reset=True)
+    t2, y2 = scope.read()
+
+    assert y1.shape == y2.shape
+    assert all(v == 5.0 for v in y2[0])
+    assert all(v == 6.0 for v in y2[1])
+
+
+# BUS SCHEMA VALIDATION TESTS ============================================================
+#
+# _check_bus_schemas() fires a logger WARNING for direct BusCreator → BusSelector
+# connections where the selector requests keys absent from the creator's schema.
+#
+# PathSim's 'pathsim' root logger has propagate=False, so pytest's caplog fixture
+# (which hooks the root logger) cannot intercept it.  We use a local fixture that
+# adds a handler directly to the 'pathsim' logger.
+
+@pytest.fixture
+def pathsim_warnings():
+    """Capture WARNING-level log records emitted by the 'pathsim' logger."""
+    class _CapHandler(logging.Handler):
+        def __init__(self):
+            super().__init__()
+            self.records = []
+        def emit(self, record):
+            if record.levelno >= logging.WARNING:
+                self.records.append(record)
+
+    h = _CapHandler()
+    pathsim_logger = logging.getLogger('pathsim')
+    pathsim_logger.addHandler(h)
+    yield h.records
+    pathsim_logger.removeHandler(h)
+
+
+def _make_zone_bus():
+    return Bus('Zone', elements=[
+        BusElement('Temperature', data_type='float', unit='C'),
+        BusElement('Humidity',    data_type='float', unit='%RH'),
+    ])
+
+
+def test_schema_valid_no_warning(pathsim_warnings):
+    """Valid BusCreator → BusSelector: no warning emitted."""
+    zone_bus = _make_zone_bus()
+    c1 = Constant(20.0); c2 = Constant(55.0)
+    creator  = BusCreator(keys=zone_bus)
+    selector = BusSelector(['Temperature', 'Humidity'])
+    Simulation([c1, c2, creator, selector], [
+        Connection(c1[0],      creator['Temperature']),
+        Connection(c2[0],      creator['Humidity']),
+        Connection(creator[0], selector['bus']),
+    ], dt=0.1)
+    schema_warns = [r for r in pathsim_warnings if 'schema' in r.message.lower()]
+    assert len(schema_warns) == 0
+
+
+def test_schema_missing_key_warns(pathsim_warnings):
+    """Selector requests a key not in the bus — warning is emitted."""
+    zone_bus = _make_zone_bus()
+    c1 = Constant(20.0); c2 = Constant(55.0)
+    creator  = BusCreator(keys=zone_bus)
+    selector = BusSelector(['Temperature', 'WindSpeed'])   # WindSpeed absent
+    Simulation([c1, c2, creator, selector], [
+        Connection(c1[0],      creator['Temperature']),
+        Connection(c2[0],      creator['Humidity']),
+        Connection(creator[0], selector['bus']),
+    ], dt=0.1)
+    schema_warns = [r for r in pathsim_warnings if 'schema mismatch' in r.message.lower()]
+    assert len(schema_warns) == 1
+    assert 'WindSpeed' in schema_warns[0].message
+
+
+def test_schema_all_missing_warns_once(pathsim_warnings):
+    """Multiple missing keys are reported in a single warning."""
+    zone_bus = _make_zone_bus()
+    c1 = Constant(20.0); c2 = Constant(55.0)
+    creator  = BusCreator(keys=zone_bus)
+    selector = BusSelector(['WindSpeed', 'Pressure'])
+    Simulation([c1, c2, creator, selector], [
+        Connection(c1[0],      creator['Temperature']),
+        Connection(c2[0],      creator['Humidity']),
+        Connection(creator[0], selector['bus']),
+    ], dt=0.1)
+    schema_warns = [r for r in pathsim_warnings if 'schema mismatch' in r.message.lower()]
+    assert len(schema_warns) == 1
+    assert 'WindSpeed' in schema_warns[0].message
+    assert 'Pressure' in schema_warns[0].message
+
+
+def test_schema_plain_keys_top_level_check(pathsim_warnings):
+    """BusCreator with plain string keys: top-level missing key warns."""
+    c1 = Constant(1.0); c2 = Constant(2.0)
+    creator  = BusCreator(keys=['a', 'b'])
+    selector = BusSelector(['a', 'c'])   # 'c' not in ['a', 'b']
+    Simulation([c1, c2, creator, selector], [
+        Connection(c1[0],      creator['a']),
+        Connection(c2[0],      creator['b']),
+        Connection(creator[0], selector['bus']),
+    ], dt=0.1)
+    schema_warns = [r for r in pathsim_warnings if 'schema mismatch' in r.message.lower()]
+    assert len(schema_warns) == 1
+    assert 'c' in schema_warns[0].message
+
+
+def test_schema_nested_valid_no_warning(pathsim_warnings):
+    """Valid dot-path key into a nested bus: no warning."""
+    zone_bus = _make_zone_bus()
+    system_bus = Bus('System', elements=[
+        BusElement('Zone',    data_type=zone_bus),
+        BusElement('Outdoor', data_type='float', unit='C'),
+    ])
+    c1 = Constant(20.0); c2 = Constant(55.0); c3 = Constant(8.0)
+    cr_zone = BusCreator(keys=zone_bus)
+    cr_sys  = BusCreator(keys=system_bus)
+    selector = BusSelector(['Zone.Temperature', 'Outdoor'])
+    Simulation([c1, c2, c3, cr_zone, cr_sys, selector], [
+        Connection(c1[0],       cr_zone['Temperature']),
+        Connection(c2[0],       cr_zone['Humidity']),
+        Connection(cr_zone[0],  cr_sys['Zone']),
+        Connection(c3[0],       cr_sys['Outdoor']),
+        Connection(cr_sys[0],   selector['bus']),
+    ], dt=0.1)
+    schema_warns = [r for r in pathsim_warnings if 'schema mismatch' in r.message.lower()]
+    assert len(schema_warns) == 0
+
+
+def test_schema_nested_invalid_key_warns(pathsim_warnings):
+    """Invalid dot-path into a nested bus: warning emitted."""
+    zone_bus = _make_zone_bus()
+    system_bus = Bus('System', elements=[
+        BusElement('Zone',    data_type=zone_bus),
+        BusElement('Outdoor', data_type='float', unit='C'),
+    ])
+    c1 = Constant(20.0); c2 = Constant(55.0); c3 = Constant(8.0)
+    cr_zone = BusCreator(keys=zone_bus)
+    cr_sys  = BusCreator(keys=system_bus)
+    selector = BusSelector(['Zone.Temperature', 'Zone.WindSpeed'])  # WindSpeed invalid
+    Simulation([c1, c2, c3, cr_zone, cr_sys, selector], [
+        Connection(c1[0],       cr_zone['Temperature']),
+        Connection(c2[0],       cr_zone['Humidity']),
+        Connection(cr_zone[0],  cr_sys['Zone']),
+        Connection(c3[0],       cr_sys['Outdoor']),
+        Connection(cr_sys[0],   selector['bus']),
+    ], dt=0.1)
+    schema_warns = [r for r in pathsim_warnings if 'schema mismatch' in r.message.lower()]
+    assert len(schema_warns) == 1
+    assert 'WindSpeed' in schema_warns[0].message
+
+
+def test_schema_no_check_through_busmerge(pathsim_warnings):
+    """BusCreator → BusMerge → BusSelector: no static check (indirect path)."""
+    zone_bus = _make_zone_bus()
+    c1 = Constant(20.0); c2 = Constant(55.0)
+    creator  = BusCreator(keys=zone_bus)
+    merger   = BusMerge(n=2)
+    selector = BusSelector(['Temperature', 'WindSpeed'])  # missing key, but via BusMerge
+    Simulation([c1, c2, creator, merger, selector], [
+        Connection(c1[0],      creator['Temperature']),
+        Connection(c2[0],      creator['Humidity']),
+        Connection(creator[0], merger['bus_0']),
+        Connection(merger[0],  selector['bus']),   # indirect — not checked
+    ], dt=0.1)
+    schema_warns = [r for r in pathsim_warnings if 'schema mismatch' in r.message.lower()]
+    assert len(schema_warns) == 0
+
+
+# BUS FUNCTION TESTS ======================================================================
+
+class TestBusFunction:
+
+    # --- Constructor validation ---------------------------------------------------------
+
+    def test_non_callable_raises(self):
+        with pytest.raises(TypeError, match="callable"):
+            BusFunction(42, ['a'], ['b'])
+
+    def test_empty_in_keys_raises(self):
+        with pytest.raises(ValueError, match="in_keys"):
+            BusFunction(lambda: None, [], ['b'])
+
+    def test_empty_out_keys_raises(self):
+        with pytest.raises(ValueError, match="out_keys"):
+            BusFunction(lambda a: a, ['a'], [])
+
+    def test_duplicate_in_key_raises(self):
+        with pytest.raises(ValueError, match="[Dd]uplicate"):
+            BusFunction(lambda a, b: (a, b), ['x', 'x'], ['p', 'q'])
+
+    def test_duplicate_out_key_raises(self):
+        with pytest.raises(ValueError, match="[Dd]uplicate"):
+            BusFunction(lambda a: (a, a), ['x'], ['p', 'p'])
+
+    # --- repr ---------------------------------------------------------------------------
+
+    def test_repr_named_function(self):
+        def my_transform(T): return T * 2
+        bf = BusFunction(my_transform, ['Temperature'], ['Temperature_x2'])
+        r = repr(bf)
+        assert 'BusFunction' in r
+        assert 'my_transform' in r
+        assert 'Temperature' in r
+
+    def test_repr_lambda(self):
+        bf = BusFunction(lambda T: T, ['T'], ['T_out'])
+        r = repr(bf)
+        assert 'BusFunction' in r
+
+    # --- update mechanics ---------------------------------------------------------------
+
+    def test_single_key_transform(self):
+        bf = BusFunction(lambda T: T * 1.8 + 32.0, ['Temperature'], ['Temperature_F'])
+        bf.inputs['bus'] = {'Temperature': 100.0}
+        bf.update()
+        result = bf.outputs['bus']
+        assert isinstance(result, dict)
+        assert abs(result['Temperature_F'] - 212.0) < 1e-9
+
+    def test_multi_key_transform(self):
+        bf = BusFunction(
+            lambda T, H: (T + 1.0, H * 2.0),
+            ['T', 'H'],
+            ['T_out', 'H_out'],
+        )
+        bf.inputs['bus'] = {'T': 10.0, 'H': 5.0}
+        bf.update()
+        out = bf.outputs['bus']
+        assert abs(out['T_out'] - 11.0) < 1e-9
+        assert abs(out['H_out'] - 10.0) < 1e-9
+
+    def test_missing_key_defaults_to_zero(self):
+        bf = BusFunction(lambda x: x * 2, ['missing'], ['out'])
+        bf.inputs['bus'] = {'a': 1.0}
+        with pytest.warns(UserWarning, match="missing"):
+            bf.update()
+        assert bf.outputs['bus']['out'] == 0.0
+
+    def test_missing_key_warns_only_once(self):
+        bf = BusFunction(lambda x: x, ['ghost'], ['out'])
+        bf.inputs['bus'] = {'a': 1.0}
+        with pytest.warns(UserWarning):
+            bf.update()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            bf.update()  # would raise if warning fires again
+
+    def test_fpi_zero_silent(self):
+        """BusFunction must not warn when bus is 0 (FPI initial state)."""
+        bf = BusFunction(lambda x: x, ['a'], ['out'])
+        bf.inputs['bus'] = 0
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            bf.update()  # no warning expected
+        assert bf.outputs['bus'] == 0  # output unchanged
+
+    def test_non_dict_warns(self):
+        bf = BusFunction(lambda x: x, ['a'], ['out'])
+        bf.inputs['bus'] = 'wrong'
+        with pytest.warns(UserWarning, match="non-dict"):
+            bf.update()
+
+    def test_dot_notation_in_key(self):
+        """Dot-notation extracts values from nested bus dicts."""
+        bf = BusFunction(
+            lambda T: T * 1.8 + 32.0,
+            ['Sensors.Temperature'],
+            ['Temperature_F'],
+        )
+        bf.inputs['bus'] = {'Sensors': {'Temperature': 0.0}}
+        bf.update()
+        assert abs(bf.outputs['bus']['Temperature_F'] - 32.0) < 1e-9
+
+    def test_output_updated_in_place(self):
+        """Second call updates the dict in place (no new allocation)."""
+        bf = BusFunction(lambda x: x * 2, ['v'], ['v2'])
+        bf.inputs['bus'] = {'v': 3.0}
+        bf.update()
+        first_dict = bf.outputs['bus']
+        bf.inputs['bus'] = {'v': 5.0}
+        bf.update()
+        # Same dict object — updated in place.
+        assert bf.outputs['bus'] is first_dict
+        assert abs(bf.outputs['bus']['v2'] - 10.0) < 1e-9
+
+    # --- reset ----------------------------------------------------------
+
+    def test_reset_clears_warnings(self):
+        bf = BusFunction(lambda x: x, ['ghost'], ['out'])
+        bf.inputs['bus'] = {'a': 1.0}
+        with pytest.warns(UserWarning):
+            bf.update()
+        assert 'ghost' in bf._warned_missing
+        bf.reset()
+        assert len(bf._warned_missing) == 0
+
+    def test_reset_clears_output(self):
+        bf = BusFunction(lambda x: x, ['a'], ['out'])
+        bf.inputs['bus'] = {'a': 7.0}
+        bf.update()
+        assert isinstance(bf.outputs['bus'], dict)
+        bf.reset()
+        assert bf.outputs['bus'] == 0
+
+    # --- integration (Simulation) -------------------------------------------------------
+
+    def test_in_simulation_basic(self):
+        """BusFunction inside a Simulation produces correct bus output."""
+        c_T = Constant(100.0)
+        c_H = Constant(50.0)
+        creator = BusCreator(keys=['Temperature', 'Humidity'])
+        bf = BusFunction(
+            lambda T, H: (T * 1.8 + 32.0, H / 100.0),
+            in_keys=['Temperature', 'Humidity'],
+            out_keys=['Temperature_F', 'Humidity_fraction'],
+        )
+        selector = BusSelector(['Temperature_F', 'Humidity_fraction'])
+        scope = Scope()
+
+        blocks = [c_T, c_H, creator, bf, selector, scope]
+        connections = [
+            Connection(c_T[0],    creator['Temperature']),
+            Connection(c_H[0],    creator['Humidity']),
+            Connection(creator[0], bf['bus']),
+            Connection(bf[0],      selector['bus']),
+            Connection(selector['Temperature_F'],       scope[0]),
+            Connection(selector['Humidity_fraction'],   scope[1]),
+        ]
+        sim = Simulation(blocks, connections, dt=0.1)
+        sim.run(duration=0.5)
+
+        t, y = scope.read()
+        assert y.shape[0] == 2
+        assert all(abs(v - 212.0) < 1e-6 for v in y[0]), f"Temperature_F: {y[0]}"
+        assert all(abs(v - 0.5)   < 1e-6 for v in y[1]), f"Humidity_fraction: {y[1]}"
+
+    def test_in_simulation_scope_bus_direct(self):
+        """BusFunction output connected directly to a bus-aware Scope."""
+        c = Constant(20.0)
+        creator = BusCreator(keys=['T'])
+        bf = BusFunction(lambda T: T + 273.15, in_keys=['T'], out_keys=['T_K'])
+        out_bus = Bus('result', elements=[BusElement('T_K', unit='K')])
+        scope = Scope(bus=out_bus)
+
+        blocks = [c, creator, bf, scope]
+        connections = [
+            Connection(c[0],       creator['T']),
+            Connection(creator[0], bf['bus']),
+            Connection(bf[0],      scope[0]),
+        ]
+        sim = Simulation(blocks, connections, dt=0.1)
+        sim.run(duration=0.5)
+
+        t, y = scope.read()
+        assert y.shape[0] == 1
+        assert all(abs(v - 293.15) < 1e-6 for v in y[0])
+
+    def test_chained_busfunctions(self):
+        """Two BusFunctions in series compose correctly."""
+        c = Constant(0.0)
+        creator = BusCreator(keys=['T_C'])
+        to_kelvin = BusFunction(lambda T: T + 273.15, ['T_C'], ['T_K'])
+        to_rankine = BusFunction(lambda T: T * 9.0 / 5.0, ['T_K'], ['T_R'])
+        selector = BusSelector(['T_R'])
+        scope = Scope()
+
+        blocks = [c, creator, to_kelvin, to_rankine, selector, scope]
+        connections = [
+            Connection(c[0],          creator['T_C']),
+            Connection(creator[0],    to_kelvin['bus']),
+            Connection(to_kelvin[0],  to_rankine['bus']),
+            Connection(to_rankine[0], selector['bus']),
+            Connection(selector['T_R'], scope[0]),
+        ]
+        sim = Simulation(blocks, connections, dt=0.1)
+        sim.run(duration=0.5)
+
+        t, y = scope.read()
+        # 0°C → 273.15 K → 491.67 R
+        assert all(abs(v - 491.67) < 1e-3 for v in y[0]), f"T_R: {y[0]}"
+
+    def test_reset_and_rerun(self):
+        """BusFunction can be reset and re-run without error."""
+        c = Constant(5.0)
+        creator = BusCreator(keys=['x'])
+        bf = BusFunction(lambda x: x ** 2, ['x'], ['x2'])
+        selector = BusSelector(['x2'])
+        scope = Scope()
+
+        blocks = [c, creator, bf, selector, scope]
+        connections = [
+            Connection(c[0],       creator['x']),
+            Connection(creator[0], bf['bus']),
+            Connection(bf[0],      selector['bus']),
+            Connection(selector['x2'], scope[0]),
+        ]
+        sim = Simulation(blocks, connections, dt=0.1)
+        sim.run(duration=0.3)
+        sim.run(duration=0.3, reset=True)
+
+        t, y = scope.read()
+        assert all(abs(v - 25.0) < 1e-6 for v in y[0])
