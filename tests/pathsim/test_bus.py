@@ -358,11 +358,11 @@ def test_bus_creator_reset_clears_output():
     assert creator.outputs['bus'] == 0
 
 
-def test_bus_selector_reset_clears_output_and_warnings(pathsim_warnings):
+def test_bus_selector_reset_clears_output_and_warnings(pathsim_logs):
     selector = BusSelector(keys=['a', 'missing'])
     selector.inputs['bus'] = {'a': 5.0}
     selector.update()
-    assert any('missing' in r.message for r in pathsim_warnings)
+    assert any('missing' in r.message for r in pathsim_logs)
     assert 'missing' in selector._warned_missing
     selector.reset()
     # After reset: outputs zeroed, warning state cleared
@@ -480,32 +480,32 @@ def test_bus_connection_works_in_simulation():
     assert all(v == 2.0 for v in y[1])
 
 
-def test_bus_selector_warns_on_missing_key(pathsim_warnings):
-    """BusSelector should log a warning when a requested key is absent."""
+def test_bus_selector_warns_on_missing_key(pathsim_logs):
+    """BusSelector should log when a requested key is absent."""
     selector = BusSelector(keys=['x', 'missing_key'])
     selector.inputs['bus'] = {'x': 42.0}
     selector.update()
-    assert any('missing_key' in r.message for r in pathsim_warnings)
+    assert any('missing_key' in r.message for r in pathsim_logs)
     assert selector.outputs['x'] == 42.0
     assert selector.outputs['missing_key'] == 0.0
 
 
-def test_bus_selector_warns_on_missing_key_only_once(pathsim_warnings):
-    """Missing-key warning should fire only once per key, not every timestep."""
+def test_bus_selector_warns_on_missing_key_only_once(pathsim_logs):
+    """Missing-key message should fire only once per key, not every timestep."""
     selector = BusSelector(keys=['ghost'])
     selector.inputs['bus'] = {'x': 1.0}
     selector.update()
-    assert len(pathsim_warnings) == 1
+    assert len([r for r in pathsim_logs if 'BUS WARNING' in r.message]) == 1
     selector.update()  # second call — must not add another record
-    assert len(pathsim_warnings) == 1
+    assert len([r for r in pathsim_logs if 'BUS WARNING' in r.message]) == 1
 
 
-def test_bus_selector_warns_on_missing_nested_key(pathsim_warnings):
-    """Dot-notation key miss should warn with the full key name."""
+def test_bus_selector_warns_on_missing_nested_key(pathsim_logs):
+    """Dot-notation key miss should log the full key name."""
     selector = BusSelector(keys=['Sensors.Temp'])
     selector.inputs['bus'] = {'Sensors': {'Pressure': 101.0}}
     selector.update()
-    assert any('Sensors.Temp' in r.message for r in pathsim_warnings)
+    assert any('Sensors.Temp' in r.message for r in pathsim_logs)
     assert selector.outputs['Sensors.Temp'] == 0.0
 
 
@@ -802,8 +802,8 @@ def _make_zone_bus():
     ])
 
 
-def test_schema_valid_no_warning(pathsim_warnings):
-    """Valid BusCreator → BusSelector: no warning emitted."""
+def test_schema_valid_no_warning(pathsim_logs):
+    """Valid BusCreator → BusSelector: no BUS WARNING emitted."""
     zone_bus = _make_zone_bus()
     c1 = Constant(20.0); c2 = Constant(55.0)
     creator  = BusCreator(keys=zone_bus)
@@ -813,12 +813,12 @@ def test_schema_valid_no_warning(pathsim_warnings):
         Connection(c2[0],      creator['Humidity']),
         Connection(creator[0], selector['bus']),
     ], dt=0.1)
-    schema_warns = [r for r in pathsim_warnings if 'schema' in r.message.lower()]
-    assert len(schema_warns) == 0
+    bus_warns = [r for r in pathsim_logs if 'BUS WARNING' in r.message]
+    assert len(bus_warns) == 0
 
 
-def test_schema_missing_key_warns(pathsim_warnings):
-    """Selector requests a key not in the bus — warning is emitted."""
+def test_schema_missing_key_warns(pathsim_logs):
+    """Selector requests a key not in the bus — BUS WARNING is emitted."""
     zone_bus = _make_zone_bus()
     c1 = Constant(20.0); c2 = Constant(55.0)
     creator  = BusCreator(keys=zone_bus)
@@ -828,13 +828,13 @@ def test_schema_missing_key_warns(pathsim_warnings):
         Connection(c2[0],      creator['Humidity']),
         Connection(creator[0], selector['bus']),
     ], dt=0.1)
-    schema_warns = [r for r in pathsim_warnings if 'schema mismatch' in r.message.lower()]
-    assert len(schema_warns) == 1
-    assert 'WindSpeed' in schema_warns[0].message
+    bus_warns = [r for r in pathsim_logs if 'BUS WARNING' in r.message]
+    assert len(bus_warns) == 1
+    assert 'WindSpeed' in bus_warns[0].message
 
 
-def test_schema_all_missing_warns_once(pathsim_warnings):
-    """Multiple missing keys are reported in a single warning."""
+def test_schema_all_missing_warns_once(pathsim_logs):
+    """Multiple missing keys are reported in a single BUS WARNING."""
     zone_bus = _make_zone_bus()
     c1 = Constant(20.0); c2 = Constant(55.0)
     creator  = BusCreator(keys=zone_bus)
@@ -844,13 +844,13 @@ def test_schema_all_missing_warns_once(pathsim_warnings):
         Connection(c2[0],      creator['Humidity']),
         Connection(creator[0], selector['bus']),
     ], dt=0.1)
-    schema_warns = [r for r in pathsim_warnings if 'schema mismatch' in r.message.lower()]
-    assert len(schema_warns) == 1
-    assert 'WindSpeed' in schema_warns[0].message
-    assert 'Pressure' in schema_warns[0].message
+    bus_warns = [r for r in pathsim_logs if 'BUS WARNING' in r.message]
+    assert len(bus_warns) == 1
+    assert 'WindSpeed' in bus_warns[0].message
+    assert 'Pressure' in bus_warns[0].message
 
 
-def test_schema_plain_keys_top_level_check(pathsim_warnings):
+def test_schema_plain_keys_top_level_check(pathsim_logs):
     """BusCreator with plain string keys: top-level missing key warns."""
     c1 = Constant(1.0); c2 = Constant(2.0)
     creator  = BusCreator(keys=['a', 'b'])
@@ -860,12 +860,12 @@ def test_schema_plain_keys_top_level_check(pathsim_warnings):
         Connection(c2[0],      creator['b']),
         Connection(creator[0], selector['bus']),
     ], dt=0.1)
-    schema_warns = [r for r in pathsim_warnings if 'schema mismatch' in r.message.lower()]
-    assert len(schema_warns) == 1
-    assert 'c' in schema_warns[0].message
+    bus_warns = [r for r in pathsim_logs if 'BUS WARNING' in r.message]
+    assert len(bus_warns) == 1
+    assert 'c' in bus_warns[0].message
 
 
-def test_schema_nested_valid_no_warning(pathsim_warnings):
+def test_schema_nested_valid_no_warning(pathsim_logs):
     """Valid dot-path key into a nested bus: no warning."""
     zone_bus = _make_zone_bus()
     system_bus = Bus('System', elements=[
@@ -883,12 +883,12 @@ def test_schema_nested_valid_no_warning(pathsim_warnings):
         Connection(c3[0],       cr_sys['Outdoor']),
         Connection(cr_sys[0],   selector['bus']),
     ], dt=0.1)
-    schema_warns = [r for r in pathsim_warnings if 'schema mismatch' in r.message.lower()]
-    assert len(schema_warns) == 0
+    bus_warns = [r for r in pathsim_logs if 'BUS WARNING' in r.message]
+    assert len(bus_warns) == 0
 
 
-def test_schema_nested_invalid_key_warns(pathsim_warnings):
-    """Invalid dot-path into a nested bus: warning emitted."""
+def test_schema_nested_invalid_key_warns(pathsim_logs):
+    """Invalid dot-path into a nested bus: BUS WARNING emitted."""
     zone_bus = _make_zone_bus()
     system_bus = Bus('System', elements=[
         BusElement('Zone',    data_type=zone_bus),
@@ -905,12 +905,12 @@ def test_schema_nested_invalid_key_warns(pathsim_warnings):
         Connection(c3[0],       cr_sys['Outdoor']),
         Connection(cr_sys[0],   selector['bus']),
     ], dt=0.1)
-    schema_warns = [r for r in pathsim_warnings if 'schema mismatch' in r.message.lower()]
-    assert len(schema_warns) == 1
-    assert 'WindSpeed' in schema_warns[0].message
+    bus_warns = [r for r in pathsim_logs if 'BUS WARNING' in r.message]
+    assert len(bus_warns) == 1
+    assert 'WindSpeed' in bus_warns[0].message
 
 
-def test_schema_no_check_through_busmerge(pathsim_warnings):
+def test_schema_no_check_through_busmerge(pathsim_logs):
     """BusCreator → BusMerge → BusSelector: no static check (indirect path)."""
     zone_bus = _make_zone_bus()
     c1 = Constant(20.0); c2 = Constant(55.0)
@@ -923,11 +923,11 @@ def test_schema_no_check_through_busmerge(pathsim_warnings):
         Connection(creator[0], merger['bus_0']),
         Connection(merger[0],  selector['bus']),   # indirect — not checked
     ], dt=0.1)
-    schema_warns = [r for r in pathsim_warnings if 'schema mismatch' in r.message.lower()]
-    assert len(schema_warns) == 0
+    bus_warns = [r for r in pathsim_logs if 'BUS WARNING' in r.message]
+    assert len(bus_warns) == 0
 
 
-def test_schema_mismatch_through_subsystem(pathsim_warnings):
+def test_schema_mismatch_through_subsystem(pathsim_logs):
     """BusCreator → Subsystem(passthrough) → BusSelector: schema check crosses Subsystem boundary."""
     zone_bus = _make_zone_bus()  # keys: Temperature, Humidity
     c1 = Constant(20.0); c2 = Constant(55.0)
@@ -954,9 +954,9 @@ def test_schema_mismatch_through_subsystem(pathsim_warnings):
         ],
         dt=0.1,
     )
-    schema_warns = [r for r in pathsim_warnings if 'schema mismatch' in r.message.lower()]
-    assert len(schema_warns) >= 1
-    assert any('WindSpeed' in r.message for r in schema_warns)
+    bus_warns = [r for r in pathsim_logs if 'BUS WARNING' in r.message]
+    assert len(bus_warns) >= 1
+    assert any('WindSpeed' in r.message for r in bus_warns)
 
 
 # BUS FUNCTION TESTS ======================================================================
@@ -1022,20 +1022,21 @@ class TestBusFunction:
         assert abs(out['T_out'] - 11.0) < 1e-9
         assert abs(out['H_out'] - 10.0) < 1e-9
 
-    def test_missing_key_defaults_to_zero(self, pathsim_warnings):
+    def test_missing_key_defaults_to_zero(self, pathsim_logs):
         bf = BusFunction(lambda x: x * 2, ['missing'], ['out'])
         bf.inputs['bus'] = {'a': 1.0}
         bf.update()
-        assert any('missing' in r.message for r in pathsim_warnings)
+        assert any('missing' in r.message for r in pathsim_logs)
         assert bf.outputs['bus']['out'] == 0.0
 
-    def test_missing_key_warns_only_once(self, pathsim_warnings):
+    def test_missing_key_warns_only_once(self, pathsim_logs):
         bf = BusFunction(lambda x: x, ['ghost'], ['out'])
         bf.inputs['bus'] = {'a': 1.0}
         bf.update()
-        assert len(pathsim_warnings) == 1
+        bus_warns = [r for r in pathsim_logs if 'BUS WARNING' in r.message]
+        assert len(bus_warns) == 1
         bf.update()  # second call — must not add another record
-        assert len(pathsim_warnings) == 1
+        assert len([r for r in pathsim_logs if 'BUS WARNING' in r.message]) == 1
 
     def test_fpi_zero_silent(self, pathsim_warnings):
         """BusFunction must not warn when bus is 0 (FPI initial state)."""
@@ -1076,11 +1077,11 @@ class TestBusFunction:
 
     # --- reset ----------------------------------------------------------
 
-    def test_reset_clears_warnings(self, pathsim_warnings):
+    def test_reset_clears_warnings(self, pathsim_logs):
         bf = BusFunction(lambda x: x, ['ghost'], ['out'])
         bf.inputs['bus'] = {'a': 1.0}
         bf.update()
-        assert len(pathsim_warnings) == 1
+        assert len([r for r in pathsim_logs if 'BUS WARNING' in r.message]) == 1
         assert 'ghost' in bf._warned_missing
         bf.reset()
         assert len(bf._warned_missing) == 0

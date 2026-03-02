@@ -603,10 +603,9 @@ class Simulation:
             else:
                 missing = [k for k in block.keys if k not in valid]
             if missing:
-                self.logger.warning(
-                    f"Bus schema mismatch: {origin!r} → {block!r}: "
-                    f"key(s) {missing!r} not in bus schema. "
-                    f"BusSelector will default to 0.0 for missing keys at runtime."
+                self.logger.info(
+                    f"BUS WARNING: {block!r} requests key(s) {missing!r} "
+                    f"not in {origin!r} schema. Output will be 0.0."
                 )
             return
 
@@ -1588,6 +1587,9 @@ class Simulation:
         #reset the simulation before running it
         if reset:
             self.reset()
+
+        #re-check bus schemas now that any GUI log handler is attached
+        self._check_bus_schemas()
 
         #make an adaptive run?
         _adaptive = adaptive and self.engine.is_adaptive

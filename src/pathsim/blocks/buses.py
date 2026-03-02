@@ -161,9 +161,9 @@ class BusSelector(Block):
                     val = 0.0
                     break
             if missing and key not in self._warned_missing:
-                self._logger.warning(
-                    "BusSelector: key %r not found in bus. "
-                    "Top-level keys available: %s. Defaulting to 0.0.",
+                self._logger.info(
+                    "BUS WARNING: BusSelector key %r not found in bus. "
+                    "Available keys: %s. Output will be 0.0.",
                     key, list(bus.keys()),
                 )
                 self._warned_missing.add(key)
@@ -391,9 +391,9 @@ class BusFunction(Block):
                     val = 0.0
                     break
             if missing and key not in self._warned_missing:
-                self._logger.warning(
-                    "BusFunction: key %r not found in bus. "
-                    "Top-level keys available: %s. Defaulting to 0.0.",
+                self._logger.info(
+                    "BUS WARNING: BusFunction key %r not found in bus. "
+                    "Available keys: %s. Output will be 0.0.",
                     key, list(bus.keys()),
                 )
                 self._warned_missing.add(key)
