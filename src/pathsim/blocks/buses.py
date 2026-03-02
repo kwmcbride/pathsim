@@ -9,10 +9,15 @@
 
 # IMPORTS ===============================================================================
 
-import warnings
+import logging
 
 from ._block import Block
 from ..utils.register import Register
+
+
+# MODULE LOGGER =========================================================================
+
+_log = logging.getLogger('pathsim.blocks.buses')
 
 
 # VALID CONFLICT MODES =================================================================
@@ -132,13 +137,11 @@ class BusSelector(Block):
             # transient value during the first FPI iteration before the upstream
             # BusCreator has run.  Anything else is a likely mis-connection.
             if bus != 0:
-                warnings.warn(
-                    f"BusSelector received a non-dict input of type "
-                    f"{type(bus).__name__!r}. Expected a bus dict from a "
-                    f"BusCreator. Check that the connected output port carries "
-                    f"a bus signal.",
-                    UserWarning,
-                    stacklevel=2,
+                _log.warning(
+                    "BusSelector received a non-dict input of type %r. "
+                    "Expected a bus dict from a BusCreator. "
+                    "Check that the connected output port carries a bus signal.",
+                    type(bus).__name__,
                 )
             return
         for key in self.keys:
@@ -156,12 +159,10 @@ class BusSelector(Block):
                     val = 0.0
                     break
             if missing and key not in self._warned_missing:
-                warnings.warn(
-                    f"BusSelector: key '{key}' not found in bus. "
-                    f"Top-level keys available: {list(bus.keys())}. "
-                    f"Defaulting to 0.0.",
-                    UserWarning,
-                    stacklevel=2,
+                _log.warning(
+                    "BusSelector: key %r not found in bus. "
+                    "Top-level keys available: %s. Defaulting to 0.0.",
+                    key, list(bus.keys()),
                 )
                 self._warned_missing.add(key)
             self.outputs[key] = val
@@ -255,11 +256,10 @@ class BusMerge(Block):
                         continue   # keep existing value
                     elif self.on_conflict == 'warn':
                         if key not in self._warned_conflicts:
-                            warnings.warn(
-                                f"BusMerge: key '{key}' appears in multiple input "
-                                f"buses. bus_{i} value will be used (last wins).",
-                                UserWarning,
-                                stacklevel=2,
+                            _log.warning(
+                                "BusMerge: key %r appears in multiple input buses. "
+                                "bus_%s value will be used (last wins).",
+                                key, i,
                             )
                             self._warned_conflicts.add(key)
                         # fall through to overwrite (last wins)
@@ -360,13 +360,11 @@ class BusFunction(Block):
         bus = self.inputs['bus']
         if not isinstance(bus, dict):
             if bus != 0:
-                warnings.warn(
-                    f"BusFunction received a non-dict input of type "
-                    f"{type(bus).__name__!r}. Expected a bus dict from a "
-                    f"BusCreator. Check that the connected output port carries "
-                    f"a bus signal.",
-                    UserWarning,
-                    stacklevel=2,
+                _log.warning(
+                    "BusFunction received a non-dict input of type %r. "
+                    "Expected a bus dict from a BusCreator. "
+                    "Check that the connected output port carries a bus signal.",
+                    type(bus).__name__,
                 )
             return
 
@@ -387,12 +385,10 @@ class BusFunction(Block):
                     val = 0.0
                     break
             if missing and key not in self._warned_missing:
-                warnings.warn(
-                    f"BusFunction: key '{key}' not found in bus. "
-                    f"Top-level keys available: {list(bus.keys())}. "
-                    f"Defaulting to 0.0.",
-                    UserWarning,
-                    stacklevel=2,
+                _log.warning(
+                    "BusFunction: key %r not found in bus. "
+                    "Top-level keys available: %s. Defaulting to 0.0.",
+                    key, list(bus.keys()),
                 )
                 self._warned_missing.add(key)
             vals.append(val)

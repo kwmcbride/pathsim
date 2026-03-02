@@ -4,6 +4,8 @@ from pathsim.blocks.sources import Constant
 from pathsim.blocks.buses import BusCreator, BusSelector, BusMerge
 from pathsim.blocks.scope import Scope
 
+# Note: pathsim_warnings fixture comes from tests/pathsim/conftest.py
+
 # Minimal simulation harness for block wiring
 def test_bus_creator_and_selector():
     # Create two constant blocks
@@ -63,31 +65,26 @@ def test_busmerge_three_inputs():
     assert m.outputs['bus'] == {'a': 1.0, 'b': 2.0, 'c': 3.0}
 
 
-def test_busmerge_conflict_last_wins():
+def test_busmerge_conflict_last_wins(pathsim_warnings):
     """Default on_conflict='warn': last bus wins, warning emitted once."""
     m = BusMerge(n=2, on_conflict='warn')
     m.inputs['bus_0'] = {'x': 1.0}
     m.inputs['bus_1'] = {'x': 99.0}
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        m.update()
+    m.update()
     assert m.outputs['bus']['x'] == 99.0
-    assert len(w) == 1
-    assert 'x' in str(w[0].message)
+    assert len(pathsim_warnings) == 1
+    assert 'x' in pathsim_warnings[0].message
 
 
-def test_busmerge_conflict_warn_once():
+def test_busmerge_conflict_warn_once(pathsim_warnings):
     """Conflict warning fires only once per key, not on every update."""
     m = BusMerge(n=2, on_conflict='warn')
     m.inputs['bus_0'] = {'x': 1.0}
     m.inputs['bus_1'] = {'x': 2.0}
-    with warnings.catch_warnings(record=True):
-        warnings.simplefilter("always")
-        m.update()   # first call — warns
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        m.update()   # second call — must not warn again
-    assert len(w) == 0
+    m.update()   # first call — warns
+    assert len(pathsim_warnings) == 1
+    m.update()   # second call — must not warn again
+    assert len(pathsim_warnings) == 1
 
 
 def test_busmerge_conflict_error():
@@ -106,15 +103,13 @@ def test_busmerge_conflict_first():
     assert m.outputs['bus']['x'] == 1.0   # first wins
 
 
-def test_busmerge_conflict_last_silent():
+def test_busmerge_conflict_last_silent(pathsim_warnings):
     m = BusMerge(n=2, on_conflict='last')
     m.inputs['bus_0'] = {'x': 1.0}
     m.inputs['bus_1'] = {'x': 99.0}
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        m.update()
+    m.update()
     assert m.outputs['bus']['x'] == 99.0
-    assert len(w) == 0   # no warning
+    assert len(pathsim_warnings) == 0   # no warning
 
 
 def test_busmerge_fpi_transient_skipped():
@@ -139,13 +134,11 @@ def test_busmerge_in_place_update():
     assert m.outputs['bus'] == {'x': 10.0, 'y': 2.0}
 
 
-def test_busmerge_reset_clears_warnings_and_output():
+def test_busmerge_reset_clears_warnings_and_output(pathsim_warnings):
     m = BusMerge(n=2)
     m.inputs['bus_0'] = {'x': 1.0}
     m.inputs['bus_1'] = {'x': 2.0}
-    with warnings.catch_warnings():
-        warnings.simplefilter("always")
-        m.update()
+    m.update()
     assert 'x' in m._warned_conflicts
     m.reset()
     assert len(m._warned_conflicts) == 0

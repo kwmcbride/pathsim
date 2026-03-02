@@ -1,4 +1,3 @@
-import logging
 import warnings
 
 from pathsim.bus import Bus, BusElement
@@ -359,11 +358,11 @@ def test_bus_creator_reset_clears_output():
     assert creator.outputs['bus'] == 0
 
 
-def test_bus_selector_reset_clears_output_and_warnings():
+def test_bus_selector_reset_clears_output_and_warnings(pathsim_warnings):
     selector = BusSelector(keys=['a', 'missing'])
     selector.inputs['bus'] = {'a': 5.0}
-    with pytest.warns(UserWarning):
-        selector.update()
+    selector.update()
+    assert any('missing' in r.message for r in pathsim_warnings)
     assert 'missing' in selector._warned_missing
     selector.reset()
     # After reset: outputs zeroed, warning state cleared
@@ -481,52 +480,49 @@ def test_bus_connection_works_in_simulation():
     assert all(v == 2.0 for v in y[1])
 
 
-def test_bus_selector_warns_on_missing_key():
-    """BusSelector should emit UserWarning when a requested key is absent."""
+def test_bus_selector_warns_on_missing_key(pathsim_warnings):
+    """BusSelector should log a warning when a requested key is absent."""
     selector = BusSelector(keys=['x', 'missing_key'])
     selector.inputs['bus'] = {'x': 42.0}
-    with pytest.warns(UserWarning, match="missing_key"):
-        selector.update()
+    selector.update()
+    assert any('missing_key' in r.message for r in pathsim_warnings)
     assert selector.outputs['x'] == 42.0
     assert selector.outputs['missing_key'] == 0.0
 
 
-def test_bus_selector_warns_on_missing_key_only_once():
+def test_bus_selector_warns_on_missing_key_only_once(pathsim_warnings):
     """Missing-key warning should fire only once per key, not every timestep."""
     selector = BusSelector(keys=['ghost'])
     selector.inputs['bus'] = {'x': 1.0}
-    with pytest.warns(UserWarning):
-        selector.update()
-    # Second call must NOT emit another warning
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        selector.update()  # would raise if a warning fires
+    selector.update()
+    assert len(pathsim_warnings) == 1
+    selector.update()  # second call — must not add another record
+    assert len(pathsim_warnings) == 1
 
 
-def test_bus_selector_warns_on_missing_nested_key():
+def test_bus_selector_warns_on_missing_nested_key(pathsim_warnings):
     """Dot-notation key miss should warn with the full key name."""
     selector = BusSelector(keys=['Sensors.Temp'])
     selector.inputs['bus'] = {'Sensors': {'Pressure': 101.0}}
-    with pytest.warns(UserWarning, match="Sensors.Temp"):
-        selector.update()
+    selector.update()
+    assert any('Sensors.Temp' in r.message for r in pathsim_warnings)
     assert selector.outputs['Sensors.Temp'] == 0.0
 
 
-def test_bus_selector_warns_on_non_dict_input():
+def test_bus_selector_warns_on_non_dict_input(pathsim_warnings):
     """BusSelector should warn when the bus input is not a dict (and not the FPI zero)."""
     selector = BusSelector(keys=['x'])
     selector.inputs['bus'] = 'wrong_type'
-    with pytest.warns(UserWarning, match="non-dict"):
-        selector.update()
+    selector.update()
+    assert any('non-dict' in r.message for r in pathsim_warnings)
 
 
-def test_bus_selector_silent_on_fpi_zero():
+def test_bus_selector_silent_on_fpi_zero(pathsim_warnings):
     """BusSelector must NOT warn when bus is 0 (the FPI initial state)."""
     selector = BusSelector(keys=['x'])
     selector.inputs['bus'] = 0  # FPI transient
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        selector.update()  # would raise if a warning fires
+    selector.update()
+    assert len(pathsim_warnings) == 0
 
 
 def test_bus_circular_reference_get_leaf_elements():
@@ -798,23 +794,6 @@ def test_scope_bus_resets_correctly():
 # (which hooks the root logger) cannot intercept it.  We use a local fixture that
 # adds a handler directly to the 'pathsim' logger.
 
-@pytest.fixture
-def pathsim_warnings():
-    """Capture WARNING-level log records emitted by the 'pathsim' logger."""
-    class _CapHandler(logging.Handler):
-        def __init__(self):
-            super().__init__()
-            self.records = []
-        def emit(self, record):
-            if record.levelno >= logging.WARNING:
-                self.records.append(record)
-
-    h = _CapHandler()
-    pathsim_logger = logging.getLogger('pathsim')
-    pathsim_logger.addHandler(h)
-    yield h.records
-    pathsim_logger.removeHandler(h)
-
 
 def _make_zone_bus():
     return Bus('Zone', elements=[
@@ -948,6 +927,38 @@ def test_schema_no_check_through_busmerge(pathsim_warnings):
     assert len(schema_warns) == 0
 
 
+def test_schema_mismatch_through_subsystem(pathsim_warnings):
+    """BusCreator → Subsystem(passthrough) → BusSelector: schema check crosses Subsystem boundary."""
+    zone_bus = _make_zone_bus()  # keys: Temperature, Humidity
+    c1 = Constant(20.0); c2 = Constant(55.0)
+    creator  = BusCreator(keys=zone_bus)
+
+    # Build a passthrough subsystem: bus enters at port 0, exits at port 0.
+    # Interface output 0 (= signal from outside) wired directly to Interface input 0
+    # (= signal going to outside).
+    iface = Interface()
+    passthrough = Subsystem(
+        blocks=[iface],
+        connections=[Connection(iface[0], iface[0])],
+    )
+
+    selector = BusSelector(['Temperature', 'WindSpeed'])  # 'WindSpeed' is invalid
+
+    Simulation(
+        [c1, c2, creator, passthrough, selector],
+        [
+            Connection(c1[0],          creator['Temperature']),
+            Connection(c2[0],          creator['Humidity']),
+            Connection(creator[0],     passthrough[0]),
+            Connection(passthrough[0], selector['bus']),
+        ],
+        dt=0.1,
+    )
+    schema_warns = [r for r in pathsim_warnings if 'schema mismatch' in r.message.lower()]
+    assert len(schema_warns) >= 1
+    assert any('WindSpeed' in r.message for r in schema_warns)
+
+
 # BUS FUNCTION TESTS ======================================================================
 
 class TestBusFunction:
@@ -1011,36 +1022,34 @@ class TestBusFunction:
         assert abs(out['T_out'] - 11.0) < 1e-9
         assert abs(out['H_out'] - 10.0) < 1e-9
 
-    def test_missing_key_defaults_to_zero(self):
+    def test_missing_key_defaults_to_zero(self, pathsim_warnings):
         bf = BusFunction(lambda x: x * 2, ['missing'], ['out'])
         bf.inputs['bus'] = {'a': 1.0}
-        with pytest.warns(UserWarning, match="missing"):
-            bf.update()
+        bf.update()
+        assert any('missing' in r.message for r in pathsim_warnings)
         assert bf.outputs['bus']['out'] == 0.0
 
-    def test_missing_key_warns_only_once(self):
+    def test_missing_key_warns_only_once(self, pathsim_warnings):
         bf = BusFunction(lambda x: x, ['ghost'], ['out'])
         bf.inputs['bus'] = {'a': 1.0}
-        with pytest.warns(UserWarning):
-            bf.update()
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            bf.update()  # would raise if warning fires again
+        bf.update()
+        assert len(pathsim_warnings) == 1
+        bf.update()  # second call — must not add another record
+        assert len(pathsim_warnings) == 1
 
-    def test_fpi_zero_silent(self):
+    def test_fpi_zero_silent(self, pathsim_warnings):
         """BusFunction must not warn when bus is 0 (FPI initial state)."""
         bf = BusFunction(lambda x: x, ['a'], ['out'])
         bf.inputs['bus'] = 0
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            bf.update()  # no warning expected
+        bf.update()
+        assert len(pathsim_warnings) == 0
         assert bf.outputs['bus'] == 0  # output unchanged
 
-    def test_non_dict_warns(self):
+    def test_non_dict_warns(self, pathsim_warnings):
         bf = BusFunction(lambda x: x, ['a'], ['out'])
         bf.inputs['bus'] = 'wrong'
-        with pytest.warns(UserWarning, match="non-dict"):
-            bf.update()
+        bf.update()
+        assert any('non-dict' in r.message for r in pathsim_warnings)
 
     def test_dot_notation_in_key(self):
         """Dot-notation extracts values from nested bus dicts."""
@@ -1067,11 +1076,11 @@ class TestBusFunction:
 
     # --- reset ----------------------------------------------------------
 
-    def test_reset_clears_warnings(self):
+    def test_reset_clears_warnings(self, pathsim_warnings):
         bf = BusFunction(lambda x: x, ['ghost'], ['out'])
         bf.inputs['bus'] = {'a': 1.0}
-        with pytest.warns(UserWarning):
-            bf.update()
+        bf.update()
+        assert len(pathsim_warnings) == 1
         assert 'ghost' in bf._warned_missing
         bf.reset()
         assert len(bf._warned_missing) == 0

@@ -513,49 +513,137 @@ class Simulation:
 
     # system assembly -------------------------------------------------------------
 
-    def _check_bus_schemas(self):
-        """Warn when a BusCreator output is directly wired to a BusSelector
-        that requests keys absent from the creator's schema.
+    def _check_bus_schemas(self, connections=None):
+        """Warn when a BusSelector receives keys absent from the upstream BusCreator schema.
 
-        Only direct BusCreator → BusSelector connections are checked;
-        indirect paths through BusMerge or other blocks cannot be
-        validated statically.
+        Traces bus signals forward from every BusCreator in *connections*,
+        crossing Subsystem boundaries (including pure passthrough wires), and
+        warns for each BusSelector that requests a key not present in the schema.
+
+        Parameters
+        ----------
+        connections : iterable or None
+            Connection set to check.  Defaults to ``self.connections`` (outer
+            level).  Passed recursively to check BusCreators inside Subsystems.
         """
-        from .blocks.buses import BusCreator, BusSelector
+        from .blocks.buses import BusCreator
+        from .subsystem import Subsystem
 
-        for conn in self.connections:
+        if connections is None:
+            connections = self.connections
+
+        seen_subsystems = set()
+
+        for conn in connections:
             src = conn.source.block
+
+            # Collect subsystems at this level for recursive descent.
+            if isinstance(src, Subsystem):
+                seen_subsystems.add(src)
+            for trg_ref in conn.targets:
+                if isinstance(trg_ref.block, Subsystem):
+                    seen_subsystems.add(trg_ref.block)
+
             if not isinstance(src, BusCreator):
                 continue
 
+            # Build valid schema for this BusCreator.
+            if src.bus is not None:
+                valid = set(_bus_valid_paths(src.bus.structure_dict()))
+                plain = False
+            else:
+                valid = set(src.keys)
+                plain = True   # only top-level check for plain-key creators
+
             for trg_ref in conn.targets:
-                tgt = trg_ref.block
-                if not isinstance(tgt, BusSelector):
-                    continue
+                self._trace_bus_forward(
+                    trg_ref.block, trg_ref.ports[0], valid, plain, src,
+                    current_conns=connections,
+                )
 
-                # Build the set of valid dot-paths from the creator's schema.
-                if src.bus is not None:
-                    valid = set(_bus_valid_paths(src.bus.structure_dict()))
-                else:
-                    # Plain string keys — only top-level paths are known.
-                    valid = set(src.keys)
+        # Recurse into every Subsystem seen at this level.
+        for sub in seen_subsystems:
+            self._check_bus_schemas(sub.connections)
 
-                # For plain-key creators, a dot-path selector like 'a.b'
-                # is only checkable at the top level.
-                if src.bus is None:
-                    missing = [
-                        k for k in tgt.keys
-                        if k.split('.')[0] not in valid
-                    ]
-                else:
-                    missing = [k for k in tgt.keys if k not in valid]
 
-                if missing:
-                    self.logger.warning(
-                        f"Bus schema mismatch: {src!r} → {tgt!r}: "
-                        f"key(s) {missing!r} not in bus schema {src.keys!r}. "
-                        f"BusSelector will default to 0.0 for missing keys at runtime."
-                    )
+    def _trace_bus_forward(self, block, in_port, valid, plain, origin,
+                           current_conns, conns_stack=None, _depth=0):
+        """Follow a bus signal forward and warn for BusSelectors with missing keys.
+
+        Parameters
+        ----------
+        block : Block
+            Block receiving the bus signal.
+        in_port : int
+            Input port index on *block*.
+        valid : set[str]
+            Valid dot-path keys for this bus schema.
+        plain : bool
+            True → only top-level key checking (plain-list BusCreator).
+        origin : BusCreator
+            The originating BusCreator (used in warning messages).
+        current_conns : iterable
+            Connections at the level where *block* lives.
+        conns_stack : list[(outer_conns, parent_subsystem)] or None
+            Stack of outer-level context, used to exit Subsystem boundaries.
+        _depth : int
+            Recursion guard — stops at 20 levels.
+        """
+        if _depth > 20:
+            return
+        if conns_stack is None:
+            conns_stack = []
+
+        from .blocks.buses import BusSelector
+        from .subsystem import Subsystem, Interface
+
+        if isinstance(block, BusSelector):
+            if plain:
+                missing = [k for k in block.keys if k.split('.')[0] not in valid]
+            else:
+                missing = [k for k in block.keys if k not in valid]
+            if missing:
+                self.logger.warning(
+                    f"Bus schema mismatch: {origin!r} → {block!r}: "
+                    f"key(s) {missing!r} not in bus schema. "
+                    f"BusSelector will default to 0.0 for missing keys at runtime."
+                )
+            return
+
+        if isinstance(block, Subsystem):
+            # Bus enters subsystem at port in_port (= Interface.outputs[in_port]).
+            iface = block.interface
+            new_stack = conns_stack + [(current_conns, block)]
+            for inner_conn in block.connections:
+                if (inner_conn.source.block is iface
+                        and inner_conn.source.ports[0] == in_port):
+                    for inner_trg in inner_conn.targets:
+                        self._trace_bus_forward(
+                            inner_trg.block, inner_trg.ports[0], valid, plain, origin,
+                            current_conns=block.connections,
+                            conns_stack=new_stack,
+                            _depth=_depth + 1,
+                        )
+            return
+
+        if isinstance(block, Interface):
+            # Bus is exiting a Subsystem via Interface.inputs[in_port]
+            # (= parent Subsystem outputs[in_port]).  Pop the stack and follow
+            # outer connections from the parent Subsystem at that output port.
+            if conns_stack:
+                outer_conns, parent_sub = conns_stack[-1]
+                remaining_stack = conns_stack[:-1]
+                for outer_conn in outer_conns:
+                    if (outer_conn.source.block is parent_sub
+                            and outer_conn.source.ports[0] == in_port):
+                        for outer_trg in outer_conn.targets:
+                            self._trace_bus_forward(
+                                outer_trg.block, outer_trg.ports[0], valid, plain, origin,
+                                current_conns=outer_conns,
+                                conns_stack=remaining_stack,
+                                _depth=_depth + 1,
+                            )
+            return
 
 
     def _assemble_graph(self):
