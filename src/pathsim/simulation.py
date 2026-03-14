@@ -599,6 +599,21 @@ class Simulation:
                 )
             return
 
+        from .blocks.buses import BusFunction
+        if isinstance(block, BusFunction):
+            # BusFunction transforms the schema — output keys are known statically.
+            new_valid = set(block.out_keys)
+            for out_conn in current_conns:
+                if out_conn.source.block is block and out_conn.source.ports[0] == 0:
+                    for trg in out_conn.targets:
+                        self._trace_bus_forward(
+                            trg.block, trg.ports[0], new_valid, block,
+                            current_conns=current_conns,
+                            conns_stack=conns_stack,
+                            _depth=_depth + 1,
+                        )
+            return
+
         if isinstance(block, Subsystem):
             # Bus enters subsystem at port in_port (= Interface.outputs[in_port]).
             iface = block.interface
@@ -673,9 +688,6 @@ class Simulation:
 
         #inject simulation logger into bus blocks so PathView's log panel sees them
         self._inject_logger_into_blocks(self.blocks)
-
-        #check bus schemas on direct BusCreator → BusSelector connections
-        self._check_bus_schemas()
 
 
     def _inject_logger_into_blocks(self, blocks):

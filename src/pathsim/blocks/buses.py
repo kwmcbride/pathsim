@@ -9,6 +9,7 @@
 
 # IMPORTS ===============================================================================
 
+import re
 import logging
 
 from ._block import Block
@@ -20,9 +21,26 @@ from ..utils.register import Register
 _log = logging.getLogger('pathsim.blocks.buses')
 
 
+# PUBLIC API =============================================================================
+
+__all__ = ['BusCreator', 'BusSelector', 'BusMerge', 'BusFunction']
+
+
 # VALID CONFLICT MODES =================================================================
 
 _CONFLICT_MODES = frozenset({'warn', 'error', 'first', 'last'})
+
+_BAD_KEY = re.compile(r'^\.|\.\.|\.$|^$')
+
+
+def _validate_dot_keys(keys, block_name):
+    """Raise ValueError for empty, leading-dot, trailing-dot, or double-dot keys."""
+    for k in keys:
+        if _BAD_KEY.search(k):
+            raise ValueError(
+                f"{block_name}: invalid key {k!r} — keys must be non-empty and "
+                f"must not start/end with a dot or contain consecutive dots."
+            )
 
 
 # MISO BLOCKS ===========================================================================
@@ -108,6 +126,9 @@ class BusSelector(Block):
     """
 
     def __init__(self, keys):
+        if len(keys) == 0:
+            raise ValueError("BusSelector: 'keys' must not be empty.")
+        _validate_dot_keys(keys, 'BusSelector')
         seen = set()
         for k in keys:
             if k in seen:
@@ -141,7 +162,7 @@ class BusSelector(Block):
             # Register initialises object-dtype entries to 0; that is the expected
             # transient value during the first FPI iteration before the upstream
             # BusCreator has run.  Anything else is a likely mis-connection.
-            if bus != 0:
+            if not (isinstance(bus, (int, float)) and bus == 0):
                 self._logger.warning(
                     "BusSelector received a non-dict input of type %r. "
                     "Expected a bus dict from a BusCreator. "
@@ -246,6 +267,7 @@ class BusMerge(Block):
         else:
             bus_out.clear()
 
+        _src = {}   # key -> first source bus index (for conflict reporting)
         for i in range(self.n):
             bus_in = self.inputs[f'bus_{i}']
             if not isinstance(bus_in, dict):
@@ -257,7 +279,7 @@ class BusMerge(Block):
                     if self.on_conflict == 'error':
                         raise ValueError(
                             f"BusMerge: key conflict — '{key}' appears in both "
-                            f"bus_{bus_out.get('_src_' + key, '?')} and bus_{i}."
+                            f"bus_{_src.get(key, '?')} and bus_{i}."
                         )
                     elif self.on_conflict == 'first':
                         continue   # keep existing value
@@ -270,6 +292,8 @@ class BusMerge(Block):
                             )
                             self._warned_conflicts.add(key)
                         # fall through to overwrite (last wins)
+                else:
+                    _src[key] = i
                 bus_out[key] = val
 
 
@@ -330,6 +354,8 @@ class BusFunction(Block):
             raise ValueError("BusFunction: 'in_keys' must not be empty.")
         if len(out_keys) == 0:
             raise ValueError("BusFunction: 'out_keys' must not be empty.")
+        _validate_dot_keys(in_keys, 'BusFunction in_keys')
+        _validate_dot_keys(out_keys, 'BusFunction out_keys')
         for label, keys in [('in_keys', in_keys), ('out_keys', out_keys)]:
             seen = set()
             for k in keys:
@@ -358,6 +384,18 @@ class BusFunction(Block):
             f"in_keys={self.in_keys}, out_keys={self.out_keys})"
         )
 
+    def __deepcopy__(self, memo):
+        import copy
+        # deepcopy does not rebind lambda closures, so construct a fresh instance
+        # (same callable reference is correct — the func itself is not copied).
+        new = BusFunction(self.func, list(self.in_keys), list(self.out_keys))
+        new.inputs  = copy.deepcopy(self.inputs,  memo)
+        new.outputs = copy.deepcopy(self.outputs, memo)
+        new._warned_missing = set()
+        new._logger = self._logger
+        memo[id(self)] = new
+        return new
+
 
     def reset(self):
         """Reset registers and clear per-run warning state."""
@@ -368,7 +406,7 @@ class BusFunction(Block):
     def update(self, t=None):
         bus = self.inputs['bus']
         if not isinstance(bus, dict):
-            if bus != 0:
+            if not (isinstance(bus, (int, float)) and bus == 0):
                 self._logger.warning(
                     "BusFunction received a non-dict input of type %r. "
                     "Expected a bus dict from a BusCreator. "

@@ -72,7 +72,7 @@ class ConnectionBooster:
 
 
     def __bool__(self):
-        return len(self.connections) > 0
+        return True
 
 
     def get(self):
@@ -130,8 +130,14 @@ class ConnectionBooster:
         current = self.get()
 
         # Determine connection type on the first call after init/reset.
-        if self._is_bus is None:
-            self._is_bus = current.dtype == object and isinstance(current.flat[0], dict)
+        # Stay None while the value is still the FPI zero-init sentinel so we
+        # don't permanently lock _is_bus to False before BusCreator has run.
+        if self._is_bus is None and len(current) > 0:
+            val = current.flat[0]
+            if isinstance(val, dict):
+                self._is_bus = True
+            elif not (isinstance(val, (int, float)) and val == 0):
+                self._is_bus = False
 
         if self._is_bus:
             # Bus signal: Anderson acceleration is not applicable.

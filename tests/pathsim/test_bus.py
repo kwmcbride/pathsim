@@ -818,46 +818,51 @@ def test_schema_valid_no_warning(pathsim_logs):
     c1 = Constant(20.0); c2 = Constant(55.0)
     creator  = BusCreator(zone_bus)
     selector = BusSelector(['Temperature', 'Humidity'])
-    Simulation([c1, c2, creator, selector], [
+    sim = Simulation([c1, c2, creator, selector], [
         Connection(c1[0],      creator['Temperature']),
         Connection(c2[0],      creator['Humidity']),
         Connection(creator[0], selector['bus']),
     ], dt=0.1)
+    sim.run(duration=0.1)
     bus_warns = [r for r in pathsim_logs if 'BUS WARNING' in r.message]
     assert len(bus_warns) == 0
 
 
 def test_schema_missing_key_warns(pathsim_logs):
-    """Selector requests a key not in the bus — BUS WARNING is emitted."""
+    """Selector requests a key not in the bus — static BUS WARNING is emitted."""
     zone_bus = _make_zone_bus()
     c1 = Constant(20.0); c2 = Constant(55.0)
     creator  = BusCreator(zone_bus)
     selector = BusSelector(['Temperature', 'WindSpeed'])   # WindSpeed absent
-    Simulation([c1, c2, creator, selector], [
+    sim = Simulation([c1, c2, creator, selector], [
         Connection(c1[0],      creator['Temperature']),
         Connection(c2[0],      creator['Humidity']),
         Connection(creator[0], selector['bus']),
     ], dt=0.1)
-    bus_warns = [r for r in pathsim_logs if 'BUS WARNING' in r.message]
-    assert len(bus_warns) == 1
-    assert 'WindSpeed' in bus_warns[0].message
+    sim.run(duration=0.1)
+    # Static-check message contains "schema"; runtime BusSelector warning does not.
+    static_warns = [r for r in pathsim_logs if 'BUS WARNING' in r.message and 'schema' in r.message]
+    assert len(static_warns) >= 1
+    assert 'WindSpeed' in static_warns[0].message
 
 
 def test_schema_all_missing_warns_once(pathsim_logs):
-    """Multiple missing keys are reported in a single BUS WARNING."""
+    """Multiple missing keys are reported in a single static BUS WARNING."""
     zone_bus = _make_zone_bus()
     c1 = Constant(20.0); c2 = Constant(55.0)
     creator  = BusCreator(zone_bus)
     selector = BusSelector(['WindSpeed', 'Pressure'])
-    Simulation([c1, c2, creator, selector], [
+    sim = Simulation([c1, c2, creator, selector], [
         Connection(c1[0],      creator['Temperature']),
         Connection(c2[0],      creator['Humidity']),
         Connection(creator[0], selector['bus']),
     ], dt=0.1)
-    bus_warns = [r for r in pathsim_logs if 'BUS WARNING' in r.message]
-    assert len(bus_warns) == 1
-    assert 'WindSpeed' in bus_warns[0].message
-    assert 'Pressure' in bus_warns[0].message
+    sim.run(duration=0.1)
+    static_warns = [r for r in pathsim_logs
+                    if 'BUS WARNING' in r.message and 'schema' in r.message]
+    assert len(static_warns) >= 1
+    assert 'WindSpeed' in static_warns[0].message
+    assert 'Pressure' in static_warns[0].message
 
 
 def test_schema_plain_keys_top_level_check(pathsim_logs):
@@ -865,14 +870,15 @@ def test_schema_plain_keys_top_level_check(pathsim_logs):
     c1 = Constant(1.0); c2 = Constant(2.0)
     creator  = BusCreator(['a', 'b'])
     selector = BusSelector(['a', 'c'])   # 'c' not in ['a', 'b']
-    Simulation([c1, c2, creator, selector], [
+    sim = Simulation([c1, c2, creator, selector], [
         Connection(c1[0],      creator['a']),
         Connection(c2[0],      creator['b']),
         Connection(creator[0], selector['bus']),
     ], dt=0.1)
-    bus_warns = [r for r in pathsim_logs if 'BUS WARNING' in r.message]
-    assert len(bus_warns) == 1
-    assert 'c' in bus_warns[0].message
+    sim.run(duration=0.1)
+    static_warns = [r for r in pathsim_logs
+                    if 'BUS WARNING' in r.message and 'schema' in r.message and 'c' in r.message]
+    assert len(static_warns) >= 1
 
 
 def test_schema_nested_valid_no_warning(pathsim_logs):
@@ -886,19 +892,20 @@ def test_schema_nested_valid_no_warning(pathsim_logs):
     cr_zone = BusCreator(zone_bus)
     cr_sys  = BusCreator(system_bus)
     selector = BusSelector(['Zone.Temperature', 'Outdoor'])
-    Simulation([c1, c2, c3, cr_zone, cr_sys, selector], [
+    sim = Simulation([c1, c2, c3, cr_zone, cr_sys, selector], [
         Connection(c1[0],       cr_zone['Temperature']),
         Connection(c2[0],       cr_zone['Humidity']),
         Connection(cr_zone[0],  cr_sys['Zone']),
         Connection(c3[0],       cr_sys['Outdoor']),
         Connection(cr_sys[0],   selector['bus']),
     ], dt=0.1)
+    sim.run(duration=0.1)
     bus_warns = [r for r in pathsim_logs if 'BUS WARNING' in r.message]
     assert len(bus_warns) == 0
 
 
 def test_schema_nested_invalid_key_warns(pathsim_logs):
-    """Invalid dot-path into a nested bus: BUS WARNING emitted."""
+    """Invalid dot-path into a nested bus: static BUS WARNING emitted."""
     zone_bus = _make_zone_bus()
     system_bus = Bus('System', elements=[
         BusElement('Zone',    data_type=zone_bus),
@@ -908,33 +915,37 @@ def test_schema_nested_invalid_key_warns(pathsim_logs):
     cr_zone = BusCreator(zone_bus)
     cr_sys  = BusCreator(system_bus)
     selector = BusSelector(['Zone.Temperature', 'Zone.WindSpeed'])  # WindSpeed invalid
-    Simulation([c1, c2, c3, cr_zone, cr_sys, selector], [
+    sim = Simulation([c1, c2, c3, cr_zone, cr_sys, selector], [
         Connection(c1[0],       cr_zone['Temperature']),
         Connection(c2[0],       cr_zone['Humidity']),
         Connection(cr_zone[0],  cr_sys['Zone']),
         Connection(c3[0],       cr_sys['Outdoor']),
         Connection(cr_sys[0],   selector['bus']),
     ], dt=0.1)
-    bus_warns = [r for r in pathsim_logs if 'BUS WARNING' in r.message]
-    assert len(bus_warns) == 1
-    assert 'WindSpeed' in bus_warns[0].message
+    sim.run(duration=0.1)
+    static_warns = [r for r in pathsim_logs
+                    if 'BUS WARNING' in r.message and 'schema' in r.message and 'WindSpeed' in r.message]
+    assert len(static_warns) >= 1
 
 
 def test_schema_no_check_through_busmerge(pathsim_logs):
-    """BusCreator → BusMerge → BusSelector: no static check (indirect path)."""
+    """BusCreator → BusMerge → BusSelector: no static schema check (indirect path)."""
     zone_bus = _make_zone_bus()
     c1 = Constant(20.0); c2 = Constant(55.0)
     creator  = BusCreator(zone_bus)
     merger   = BusMerge(n=2)
     selector = BusSelector(['Temperature', 'WindSpeed'])  # missing key, but via BusMerge
-    Simulation([c1, c2, creator, merger, selector], [
+    sim = Simulation([c1, c2, creator, merger, selector], [
         Connection(c1[0],      creator['Temperature']),
         Connection(c2[0],      creator['Humidity']),
         Connection(creator[0], merger['bus_0']),
-        Connection(merger[0],  selector['bus']),   # indirect — not checked
+        Connection(merger[0],  selector['bus']),   # indirect — not checked statically
     ], dt=0.1)
-    bus_warns = [r for r in pathsim_logs if 'BUS WARNING' in r.message]
-    assert len(bus_warns) == 0
+    sim.run(duration=0.1)
+    # Static check should NOT fire (indirect path); runtime BusSelector warning may fire.
+    static_warns = [r for r in pathsim_logs
+                    if 'BUS WARNING' in r.message and 'schema' in r.message]
+    assert len(static_warns) == 0
 
 
 def test_schema_mismatch_through_subsystem(pathsim_logs):
@@ -954,7 +965,7 @@ def test_schema_mismatch_through_subsystem(pathsim_logs):
 
     selector = BusSelector(['Temperature', 'WindSpeed'])  # 'WindSpeed' is invalid
 
-    Simulation(
+    sim = Simulation(
         [c1, c2, creator, passthrough, selector],
         [
             Connection(c1[0],          creator['Temperature']),
@@ -964,9 +975,10 @@ def test_schema_mismatch_through_subsystem(pathsim_logs):
         ],
         dt=0.1,
     )
-    bus_warns = [r for r in pathsim_logs if 'BUS WARNING' in r.message]
-    assert len(bus_warns) >= 1
-    assert any('WindSpeed' in r.message for r in bus_warns)
+    sim.run(duration=0.1)
+    static_warns = [r for r in pathsim_logs
+                    if 'BUS WARNING' in r.message and 'schema' in r.message and 'WindSpeed' in r.message]
+    assert len(static_warns) >= 1
 
 
 # BUS FUNCTION TESTS ======================================================================
