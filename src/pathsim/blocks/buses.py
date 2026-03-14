@@ -140,6 +140,8 @@ class BusSelector(Block):
         self.output_port_labels = {k: i for i, k in enumerate(keys)}
         super().__init__()
         self.keys    = list(keys)
+        # Pre-split dot paths once at init — avoids repeated str.split() in update()
+        self._paths  = [tuple(k.split('.')) for k in self.keys]
         self.inputs  = Register(mapping=self.input_port_labels,  dtype=object)
         self.outputs = Register(mapping=self.output_port_labels, dtype=object)
         # Keys that have already triggered a missing-key warning (warn once per key)
@@ -170,10 +172,10 @@ class BusSelector(Block):
                     type(bus).__name__,
                 )
             return
-        for key in self.keys:
+        for key, path in zip(self.keys, self._paths):
             val = bus
             missing = False
-            for part in key.split('.'):
+            for part in path:
                 if isinstance(val, dict):
                     if part not in val:
                         missing = True
@@ -364,9 +366,11 @@ class BusFunction(Block):
                         f"BusFunction: duplicate key '{k}' in {label}."
                     )
                 seen.add(k)
-        self.func     = func
-        self.in_keys  = list(in_keys)
-        self.out_keys = list(out_keys)
+        self.func      = func
+        self.in_keys   = list(in_keys)
+        self.out_keys  = list(out_keys)
+        # Pre-split dot paths once at init — avoids repeated str.split() in update()
+        self._in_paths = [tuple(k.split('.')) for k in self.in_keys]
         self.input_port_labels  = {"bus": 0}
         self.output_port_labels = {"bus": 0}
         super().__init__()
@@ -417,10 +421,10 @@ class BusFunction(Block):
 
         # Extract input values (dot-notation supported).
         vals = []
-        for key in self.in_keys:
+        for key, path in zip(self.in_keys, self._in_paths):
             val = bus
             missing = False
-            for part in key.split('.'):
+            for part in path:
                 if isinstance(val, dict):
                     if part not in val:
                         missing = True
