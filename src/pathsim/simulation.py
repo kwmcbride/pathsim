@@ -689,6 +689,9 @@ class Simulation:
         #inject simulation logger into bus blocks so PathView's log panel sees them
         self._inject_logger_into_blocks(self.blocks)
 
+        #compile bus topology: pre-compute flat indices and buffers for bus blocks
+        self._build_bus_layout()
+
 
     def _inject_logger_into_blocks(self, blocks):
         """Set _logger on any block (or nested Subsystem block) that declares it.
@@ -704,6 +707,369 @@ class Simulation:
                 block._logger = self.logger
             if isinstance(block, Subsystem):
                 self._inject_logger_into_blocks(block.blocks)
+
+
+    def _build_bus_layout(self):
+        """Compile bus topology: pre-compute flat indices and buffers.
+
+        This is the bus "compile" step, called once per graph assembly.  It walks the
+        system topology in topological order (using the DAG), and for every bus-producing
+        block (``BusCreator``, ``BusFunction``, ``BusMerge``) it:
+
+        - Stores an ``_out_index_map`` (``{dot_path: flat_int_index}``) on the block.
+        - Injects ``_flat_indices`` into downstream ``BusSelector`` blocks.
+        - Injects ``_in_flat_indices`` + ``_out_buf`` into downstream ``BusFunction`` blocks.
+        - Builds ``_copy_plan`` + ``_buf`` for downstream ``BusMerge`` blocks.
+        - Injects ``_bus_ports`` and labels into ``Scope`` blocks directly wired to a bus.
+
+        Subsystem boundaries are handled via ``_build_bus_layout_subsystem``.
+        """
+        from .blocks.buses import (
+            BusCreator, BusSelector, BusFunction, BusMerge,
+            _BusProducer, _BusMerger, _BusConsumer,
+            _bus_key_index_map, _bus_leaf_count,
+        )
+        from .blocks.scope import Scope
+        from .subsystem import Subsystem
+
+        # Reset build-time attributes on all bus blocks so a re-assemble starts clean.
+        for block in self.blocks:
+            if isinstance(block, (_BusProducer, _BusMerger)):
+                block._out_index_map = None
+            if isinstance(block, BusSelector):
+                block._flat_indices = None
+            if isinstance(block, BusFunction):
+                block._in_flat_indices = None
+                block._out_buf = None
+            if isinstance(block, _BusMerger):
+                block._copy_plan = None
+                block._buf = None
+            if isinstance(block, Subsystem):
+                self._reset_bus_layout_subsystem(block)
+
+        def _resolve_indices(keys_paths, in_map, block, context=''):
+            """Resolve dot-paths against *in_map*; warn once per missing key."""
+            indices = []
+            for path in keys_paths:
+                dot = '.'.join(path)
+                if dot in in_map:
+                    indices.append(in_map[dot])
+                else:
+                    self.logger.info(
+                        "BUS WARNING: %r key %r not found in upstream bus schema%s. "
+                        "Output will be 0.0.",
+                        block, dot, f" ({context})" if context else '',
+                    )
+                    indices.append(0)
+            return indices
+
+        def _process_block(block):
+            """Process a single block in the bus layout build."""
+            if isinstance(block, BusCreator):
+                m, _ = _bus_key_index_map(block.bus)
+                block._out_index_map = m
+
+            elif isinstance(block, BusFunction):
+                in_map = self._find_bus_input_map(
+                    block, block.input_port_labels['bus'], self.connections
+                )
+                if in_map is not None:
+                    indices = _resolve_indices(
+                        block._in_paths, in_map, block, 'in_keys'
+                    )
+                    block._in_flat_indices = np.array(indices, dtype=np.intp)
+                    block._out_buf = np.zeros(len(block.out_keys))
+                # Output map is always just the out_keys in order
+                block._out_index_map = {k: i for i, k in enumerate(block.out_keys)}
+
+            elif isinstance(block, BusMerge):
+                self._build_merge_layout(block, self.connections)
+
+            elif isinstance(block, BusSelector):
+                in_map = self._find_bus_input_map(
+                    block, block.input_port_labels['bus'], self.connections
+                )
+                if in_map is not None:
+                    indices = _resolve_indices(block._paths, in_map, block)
+                    block._flat_indices = np.array(indices, dtype=np.intp)
+
+            elif isinstance(block, Subsystem):
+                self._build_bus_layout_subsystem(block, self.connections)
+
+        # Three-pass layout build:
+        #
+        # The fundamental ordering challenge: a non-algebraic (len==0) passthrough
+        # Subsystem between a BusCreator and a BusSelector puts BOTH at the same
+        # DAG depth.  If the BusSelector is iterated first its upstream _out_index_map
+        # is None (BusCreator not yet visited).
+        #
+        # Solution — strict producer-before-consumer ordering, independent of DAG depth:
+        #
+        #   Pass 1: BusCreator, BusFunction
+        #       → set _out_index_map (no upstream deps; BusFunction's is just {k:i}).
+        #   Pass 2: BusMerge, Subsystem
+        #       → set _out_index_map (needs Pass-1 maps; BusMerge merges upstream maps).
+        #   Pass 3: BusSelector, BusFunction
+        #       → set _flat_indices / _in_flat_indices (all upstream maps now populated).
+        #
+        # Fourth pass handles Scope (len==0 → placed at DAG depth 0 before all producers).
+
+        all_blocks = []
+        for _, blocks, _ in self.graph.dag():
+            all_blocks.extend(blocks)
+        for _, blocks, _ in self.graph.loop():
+            all_blocks.extend(blocks)
+
+        for block in all_blocks:
+            if isinstance(block, _BusProducer):       # BusCreator, BusFunction
+                _process_block(block)
+
+        for block in all_blocks:
+            if isinstance(block, (_BusMerger, Subsystem)):  # BusMerge, nested Subsystems
+                _process_block(block)
+
+        for block in all_blocks:
+            if isinstance(block, _BusConsumer):       # BusSelector, BusFunction
+                _process_block(block)
+
+        # Fourth pass: inject Scope bus info after all producers have _out_index_map.
+        for block in self.blocks:
+            if isinstance(block, Scope):
+                self._inject_scope_bus_info(block, self.connections)
+
+
+    def _reset_bus_layout_subsystem(self, sub):
+        """Recursively reset bus layout attributes inside a Subsystem."""
+        from .blocks.buses import (
+            BusSelector, BusFunction,
+            _BusProducer, _BusMerger,
+        )
+        from .blocks.scope import Scope
+        from .subsystem import Subsystem
+        for block in sub.blocks:
+            if isinstance(block, (_BusProducer, _BusMerger)):
+                block._out_index_map = None
+            if isinstance(block, BusSelector):
+                block._flat_indices = None
+            if isinstance(block, BusFunction):
+                block._in_flat_indices = None
+                block._out_buf = None
+            if isinstance(block, _BusMerger):
+                block._copy_plan = None
+                block._buf = None
+            if isinstance(block, Subsystem):
+                self._reset_bus_layout_subsystem(block)
+
+
+    def _find_bus_input_map(self, block, in_port_idx, connections):
+        """Return the ``_out_index_map`` of the block feeding *block* at *in_port_idx*.
+
+        Looks through *connections* for a connection whose target is *block* at
+        *in_port_idx*, then returns ``getattr(source, '_out_index_map', None)``.
+        Returns ``None`` if no such connection exists or the source has no map.
+
+        For ``Subsystem`` sources the map is looked up via the Subsystem's internal
+        connections (the Interface → inner bus producer chain).
+        """
+        from .subsystem import Subsystem
+        for conn in connections:
+            for trg in conn.targets:
+                # PortReference.ports stores the raw port specifier (str or int);
+                # resolve through the block's input mapping to get an integer index.
+                resolved = trg.block.inputs._map(trg.ports[0])
+                if trg.block is block and resolved == in_port_idx:
+                    src = conn.source.block
+                    src_port = conn.source.ports[0]
+                    if isinstance(src, Subsystem):
+                        return self._get_subsystem_output_map(src, src_port)
+                    return getattr(src, '_out_index_map', None)
+        return None
+
+
+    def _get_subsystem_output_map(self, sub, out_port):
+        """Find the ``_out_index_map`` that exits a Subsystem at *out_port*.
+
+        Traces backward from Interface.inputs[out_port] to the inner producer.
+        Also recursively processes bus blocks inside the Subsystem if not yet done.
+        """
+        from .subsystem import Subsystem, Interface
+        iface = sub.interface
+        for inner_conn in sub.connections:
+            for trg in inner_conn.targets:
+                if trg.block is iface and trg.ports[0] == out_port:
+                    src = inner_conn.source.block
+                    src_port = inner_conn.source.ports[0]
+                    if isinstance(src, Subsystem):
+                        return self._get_subsystem_output_map(src, src_port)
+                    if isinstance(src, Interface):
+                        # Passthrough: the source IS the Interface (external input).
+                        # Trace back through outer connections to the upstream producer.
+                        return self._find_bus_input_map(sub, src_port, self.connections)
+                    m = getattr(src, '_out_index_map', None)
+                    if m is None:
+                        # May need to build layout inside subsystem first
+                        self._build_bus_layout_subsystem(sub, self.connections)
+                        m = getattr(src, '_out_index_map', None)
+                    return m
+        return None
+
+
+    def _build_merge_layout(self, merge_block, connections):
+        """Build the copy plan and output buffer for a BusMerge block.
+
+        Scans *connections* for all inputs to *merge_block*, collects their
+        ``_out_index_map``\\s, concatenates them, and stores the result on the block.
+        """
+        input_maps = {}
+        for i in range(merge_block.n):
+            port_key = f'bus_{i}'
+            port_idx = merge_block.input_port_labels[port_key]
+            src_map = self._find_bus_input_map(merge_block, port_idx, connections)
+            if src_map is not None:
+                input_maps[i] = src_map
+
+        if not input_maps:
+            return  # No bus inputs found — keep dict fallback
+
+        merged_map = {}
+        copy_plan = []
+        offset = 0
+        for i in range(merge_block.n):
+            if i not in input_maps:
+                continue
+            src_map = input_maps[i]
+            # Size = number of leaf slots = max_index + 1
+            size = max(src_map.values()) + 1 if src_map else 0
+            port_key = f'bus_{i}'
+            copy_plan.append((offset, offset + size, port_key))
+            for path, idx in src_map.items():
+                shifted_idx = offset + idx
+                if path not in merged_map:
+                    merged_map[path] = shifted_idx
+                elif merge_block.on_conflict in ('last', 'warn'):
+                    merged_map[path] = shifted_idx
+                # 'first': keep existing entry (do nothing)
+                # 'error': not handled at compile time (runtime dict-path raises)
+            offset += size
+
+        merge_block._buf = np.zeros(offset)
+        merge_block._copy_plan = copy_plan
+        merge_block._out_index_map = merged_map
+
+
+    def _inject_scope_bus_info(self, scope, connections):
+        """Inject bus layout info into a Scope that is directly wired to a bus signal.
+
+        For each input port of *scope* that is driven by a bus-producing block,
+        sets ``scope._bus_ports[port_index]`` to the ordered list of dot-path keys
+        and (if no labels were supplied by the user) populates ``scope.labels``.
+        """
+        from .blocks.scope import Scope
+        if not isinstance(scope, Scope):
+            return
+
+        for conn in connections:
+            for trg in conn.targets:
+                if trg.block is not scope:
+                    continue
+                port_idx = trg.ports[0]
+                src = conn.source.block
+                src_port = conn.source.ports[0]
+                from .subsystem import Subsystem
+                if isinstance(src, Subsystem):
+                    in_map = self._get_subsystem_output_map(src, src_port)
+                else:
+                    in_map = getattr(src, '_out_index_map', None)
+                if in_map is None:
+                    continue
+
+                # Ordered paths sorted by flat index
+                ordered_paths = sorted(in_map.keys(), key=lambda p: in_map[p])
+
+                if scope._bus_ports is None:
+                    scope._bus_ports = {}
+                scope._bus_ports[port_idx] = ordered_paths
+
+                # Populate labels from bus paths if not user-supplied
+                if not scope.labels:
+                    scope.labels = list(ordered_paths)
+
+
+    def _build_bus_layout_subsystem(self, sub, outer_connections):
+        """Recursively build bus layout for blocks inside *sub*.
+
+        Processes bus-producing blocks inside the Subsystem in connection order
+        (no full topological sort — iterates forward over sub.connections).
+        Also exports ``_out_index_map`` on blocks that feed out through Interface.
+        """
+        from .blocks.buses import (
+            BusCreator, BusSelector, BusFunction,
+            _BusMerger, _bus_key_index_map,
+        )
+        from .blocks.scope import Scope
+        from .subsystem import Subsystem, Interface
+
+        # Process inner bus producers (order: follow connections)
+        for inner_conn in sub.connections:
+            src = inner_conn.source.block
+
+            if isinstance(src, BusCreator) and src._out_index_map is None:
+                m, _ = _bus_key_index_map(src.bus)
+                src._out_index_map = m
+
+            elif isinstance(src, BusFunction) and src._out_index_map is None:
+                in_map = self._find_bus_input_map(
+                    src, src.input_port_labels['bus'], sub.connections
+                )
+                if in_map is not None:
+                    indices = []
+                    for p in src._in_paths:
+                        dot = '.'.join(p)
+                        if dot in in_map:
+                            indices.append(in_map[dot])
+                        else:
+                            self.logger.info(
+                                "BUS WARNING: %r in_key %r not found in upstream "
+                                "bus schema. Output will be 0.0.", src, dot,
+                            )
+                            indices.append(0)
+                    src._in_flat_indices = np.array(indices, dtype=np.intp)
+                    src._out_buf = np.zeros(len(src.out_keys))
+                src._out_index_map = {k: i for i, k in enumerate(src.out_keys)}
+
+            elif isinstance(src, _BusMerger) and src._out_index_map is None:
+                self._build_merge_layout(src, sub.connections)
+
+            elif isinstance(src, Subsystem):
+                self._build_bus_layout_subsystem(src, sub.connections)
+
+            # Inject into inner consumers
+            for trg_ref in inner_conn.targets:
+                trg = trg_ref.block
+                if isinstance(trg, BusSelector) and trg._flat_indices is None:
+                    in_map = self._find_bus_input_map(
+                        trg, trg.input_port_labels['bus'], sub.connections
+                    )
+                    # If source is Interface (= external input to subsystem), trace
+                    # back through outer_connections to find the upstream producer.
+                    if in_map is None and isinstance(inner_conn.source.block, Interface):
+                        src_port = inner_conn.source.ports[0]
+                        in_map = self._find_bus_input_map(sub, src_port, outer_connections)
+                    if in_map is not None:
+                        indices = []
+                        for p in trg._paths:
+                            dot = '.'.join(p)
+                            if dot in in_map:
+                                indices.append(in_map[dot])
+                            else:
+                                self.logger.info(
+                                    "BUS WARNING: %r key %r not found in upstream "
+                                    "bus schema. Output will be 0.0.", trg, dot,
+                                )
+                                indices.append(0)
+                        trg._flat_indices = np.array(indices, dtype=np.intp)
+                elif isinstance(trg, Scope):
+                    self._inject_scope_bus_info(trg, sub.connections)
 
 
     # topological checks ----------------------------------------------------------
@@ -1589,9 +1955,6 @@ class Simulation:
         #reset the simulation before running it
         if reset:
             self.reset()
-
-        #re-check bus schemas now that any GUI log handler is attached
-        self._check_bus_schemas()
 
         #make an adaptive run?
         _adaptive = adaptive and self.engine.is_adaptive

@@ -1,9 +1,9 @@
 ########################################################################################
 ##
-##                               ConnectionBooster CLASS 
+##                               ConnectionBooster CLASS
 ##                                  (optim/booster.py)
 ##
-##       class to boost connections, injecting a fixed point acelerator for loop 
+##       class to boost connections, injecting a fixed point acelerator for loop
 ##             closing connections to simplify the algebraic loop solver
 ##
 ########################################################################################
@@ -15,34 +15,16 @@ import numpy as np
 from .anderson import Anderson
 
 
-# HELPERS ===============================================================================
-
-def _collect_leaves(val, out):
-    """Recursively collect all leaf float values from a bus dict into *out*."""
-    if isinstance(val, dict):
-        for v in val.values():
-            _collect_leaves(v, out)
-    else:
-        try:
-            out.append(float(val))
-        except (TypeError, ValueError):
-            out.append(0.0)
-
-
-def _flatten_bus_to_array(d):
-    """Return a 1-D float64 array of all leaf values in bus dict *d*."""
-    leaves = []
-    _collect_leaves(d, leaves)
-    return np.array(leaves, dtype=float)
-
-
 # CLASS =================================================================================
 
 class ConnectionBooster:
-    """Wraps a `Connection` instance and injects a fixed point accelerator. 
+    """Wraps a `Connection` instance and injects a fixed point accelerator.
 
-    This class is part of the solver structure and intended to improve the 
+    This class is part of the solver structure and intended to improve the
     algebraic loop solver of the simulation.
+
+    For bus signals (object-dtype outputs carrying a flat float64 ndarray) Anderson
+    acceleration operates directly on the flat buffer — no dict traversal needed.
 
     Parameters
     ----------
@@ -54,7 +36,7 @@ class ConnectionBooster:
     accelerator : Anderson
         internal fixed point accelerator instance
     history : float | int | array_like
-        history, previous evaliation of the connection value
+        history, previous evaluation of the connection value
     """
 
     def __init__(self, connection):
@@ -64,11 +46,10 @@ class ConnectionBooster:
         # initialize optimizer (default args)
         self.accelerator = Anderson()
 
-        # flat float64 snapshot of the previous bus-signal iteration (None for scalars)
+        # bus-path state: None until first bus call
         self._bus_history = None
-
-        # tristate flag: None = not yet determined, True = bus, False = scalar
-        self._is_bus = None
+        self._anderson_out = None
+        self._anderson_wrapper = None
 
 
     def __bool__(self):
@@ -76,10 +57,10 @@ class ConnectionBooster:
 
 
     def get(self):
-        """Return the output values of the source block that is referenced in 
+        """Return the output values of the source block that is referenced in
         the connection.
 
-        Return 
+        Return
         ------
         out : float | int | array_like
             output values of source, referenced in connection
@@ -87,13 +68,13 @@ class ConnectionBooster:
         return self.connection.source.get_outputs()
 
 
-    def set(self, val): 
+    def set(self, val):
         """Set targets input values.
 
         Parameters
         ----------
         val : float | int | array_like
-            input values to set at inputs of the targets, referenced by the 
+            input values to set at inputs of the targets, referenced by the
             connection
 
         """
@@ -107,8 +88,8 @@ class ConnectionBooster:
         """
         self.accelerator.reset()
         self.history = self.get()
+        # Clear bus history so the first post-reset call re-seeds (returns inf).
         self._bus_history = None
-        self._is_bus = None
 
 
     def update(self):
@@ -117,10 +98,8 @@ class ConnectionBooster:
         updates the history required for the next solver step, returns the
         fixed point residual.
 
-        For bus signals (object-dtype outputs carrying a dict) Anderson
-        acceleration is not applicable.  The method falls back to plain
-        fixed-point pass-through and measures convergence as the max
-        absolute change in any leaf value across iterations.
+        For bus signals (object-dtype outputs carrying a flat float64 ndarray)
+        Anderson acceleration operates directly on the flat buffer.
 
         Returns
         -------
@@ -129,29 +108,26 @@ class ConnectionBooster:
         """
         current = self.get()
 
-        # Determine connection type on the first call after init/reset.
-        # Stay None while the value is still the FPI zero-init sentinel so we
-        # don't permanently lock _is_bus to False before BusCreator has run.
-        if self._is_bus is None and len(current) > 0:
-            val = current.flat[0]
-            if isinstance(val, dict):
-                self._is_bus = True
-            elif not (isinstance(val, (int, float)) and val == 0):
-                self._is_bus = False
+        # Bus path: object-dtype register wrapping a flat float64 ndarray
+        if current.dtype == object and len(current) > 0:
+            bus_arr = current.flat[0]
+            if isinstance(bus_arr, np.ndarray):
+                if self._bus_history is None:
+                    # First call after init/reset: seed history and pass through.
+                    self._bus_history = bus_arr.copy()
+                    self._anderson_out = bus_arr.copy()
+                    self._anderson_wrapper = np.empty(1, dtype=object)
+                    self._anderson_wrapper[0] = self._anderson_out
+                    self.set(current)
+                    return float('inf')
+                # Anderson step on the flat buffer
+                _val, res = self.accelerator.step(self._bus_history, bus_arr)
+                np.copyto(self._bus_history, _val)
+                np.copyto(self._anderson_out, _val)
+                self.set(self._anderson_wrapper)
+                return res
 
-        if self._is_bus:
-            # Bus signal: Anderson acceleration is not applicable.
-            # Plain pass-through; convergence measured as max leaf-value change.
-            new_flat = _flatten_bus_to_array(current.flat[0])
-            if self._bus_history is None or self._bus_history.shape != new_flat.shape:
-                res = float('inf')
-            else:
-                res = float(np.max(np.abs(new_flat - self._bus_history)))
-            self._bus_history = new_flat   # snapshot before next in-place mutation
-            self.set(current)
-            return res
-
-        # Normal scalar / array path — Anderson acceleration.
+        # Scalar / array path — Anderson acceleration on register values
         _val, res = self.accelerator.step(self.history, current)
         self.set(_val)
         self.history = _val

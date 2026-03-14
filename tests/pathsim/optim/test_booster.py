@@ -12,42 +12,6 @@
 import numpy as np
 import pytest
 
-from pathsim.optim.booster import _collect_leaves, _flatten_bus_to_array
-
-
-# HELPER TESTS =========================================================================
-
-class TestFlattenBusToArray:
-
-    def test_flat_dict(self):
-        d = {'a': 1.0, 'b': 2.0}
-        arr = _flatten_bus_to_array(d)
-        np.testing.assert_array_equal(arr, [1.0, 2.0])
-        assert arr.dtype == float
-
-    def test_nested_dict(self):
-        d = {'zone': {'T': 20.0, 'H': 55.0}, 'wind': 3.5}
-        arr = _flatten_bus_to_array(d)
-        np.testing.assert_array_equal(arr, [20.0, 55.0, 3.5])
-
-    def test_single_key(self):
-        d = {'sig': 42.0}
-        np.testing.assert_array_equal(_flatten_bus_to_array(d), [42.0])
-
-    def test_non_numeric_leaf_defaults_to_zero(self):
-        d = {'a': 1.0, 'b': 'bad'}
-        arr = _flatten_bus_to_array(d)
-        assert arr[0] == 1.0
-        assert arr[1] == 0.0
-
-    def test_empty_dict(self):
-        arr = _flatten_bus_to_array({})
-        assert len(arr) == 0
-
-    def test_deeply_nested(self):
-        d = {'a': {'b': {'c': 7.0}}}
-        np.testing.assert_array_equal(_flatten_bus_to_array(d), [7.0])
-
 
 # INTEGRATION TESTS — bus algebraic loops =============================================
 # These tests spin up a minimal Simulation to verify that ConnectionBooster
@@ -95,7 +59,7 @@ class TestConnectionBoosterBusFallback:
         assert abs(adder2.outputs[0] - 2.0) < 1e-8
 
     def test_bus_as_loop_closing_connection(self):
-        """When the loop-closing wire itself carries a dict the sim converges."""
+        """When the loop-closing wire carries a bus ndarray the sim converges."""
         c3        = Constant(3.0)
         creator3  = BusCreator(['x', 'y'])
         selector3 = BusSelector(['x', 'y'])
@@ -110,32 +74,29 @@ class TestConnectionBoosterBusFallback:
             Connection(selector3['y'],     amp3y[0]),
         ], dt=0.1)
         sim.run(duration=0.5)
-        assert creator3.outputs['bus'] == {'x': 3.0, 'y': 0.0}
+        buf = creator3.outputs['bus']
+        assert isinstance(buf, np.ndarray)
+        assert buf[0] == pytest.approx(3.0)   # 'x' at index 0
+        assert buf[1] == pytest.approx(0.0)   # 'y' at index 1
 
     def test_bus_loop_nested_bus(self):
-        """Nested bus dict in a loop-closing connection is flattened correctly."""
-        # zones_creator produces {'ZoneA': {'T': val}, 'ZoneB': {'T': val2}}
+        """Bus in a loop-closing connection converges correctly."""
         c_a  = Constant(20.0)
         c_b  = Constant(25.0)
-        cr_a = BusCreator(['T'])
-        cr_b = BusCreator(['T'])
         zones = BusCreator(['ZoneA', 'ZoneB'])
-        sel  = BusSelector(['ZoneA.T', 'ZoneB.T'])
+        sel  = BusSelector(['ZoneA', 'ZoneB'])
 
-        sim = Simulation([c_a, c_b, cr_a, cr_b, zones, sel], [
-            Connection(c_a[0],   cr_a['T']),
-            Connection(c_b[0],   cr_b['T']),
-            Connection(cr_a[0],  zones['ZoneA']),
-            Connection(cr_b[0],  zones['ZoneB']),
+        sim = Simulation([c_a, c_b, zones, sel], [
+            Connection(c_a[0],   zones['ZoneA']),
+            Connection(c_b[0],   zones['ZoneB']),
             Connection(zones[0], sel['bus']),
-            # no actual feedback — loop_depth stays 0, but we test the helper
         ], dt=0.1)
         sim.run(duration=0.5)
-        assert sel.outputs['ZoneA.T'] == pytest.approx(20.0)
-        assert sel.outputs['ZoneB.T'] == pytest.approx(25.0)
+        assert sel.outputs['ZoneA'] == pytest.approx(20.0)
+        assert sel.outputs['ZoneB'] == pytest.approx(25.0)
 
-    def test_is_bus_none_before_first_run(self):
-        """_is_bus is None on all boosters before the simulation has run."""
+    def test_bus_history_none_before_first_update(self):
+        """_bus_history is None on all boosters before the simulation has run."""
         c     = Constant(1.0)
         adder = Adder('++')
         amp   = Amplifier(0.5)
@@ -146,21 +107,7 @@ class TestConnectionBoosterBusFallback:
         ], dt=0.1)
         # Boosters are created at build time but update() hasn't fired yet.
         for booster in sim.boosters:
-            assert booster._is_bus is None
-
-    def test_is_bus_set_after_run(self):
-        """_is_bus is not None on any booster after the simulation has run."""
-        c     = Constant(1.0)
-        adder = Adder('++')
-        amp   = Amplifier(0.5)
-        sim = Simulation([c, adder, amp], [
-            Connection(c[0],     adder[0]),
-            Connection(adder[0], amp[0]),
-            Connection(amp[0],   adder[1]),
-        ], dt=0.1)
-        sim.run(duration=0.2)
-        for booster in sim.boosters:
-            assert booster._is_bus is not None
+            assert booster._bus_history is None
 
     def test_reset_and_rerun_converges(self):
         """A bus-in-loop simulation can be reset and re-run without error."""

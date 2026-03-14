@@ -263,8 +263,10 @@ class Scope(Block):
     def _collect_row(self):
         """Read all input ports and return a flat list of scalars.
 
-        Bus dicts on any port are expanded to their leaf scalar values in
-        depth-first order.  Plain scalar ports pass through unchanged.
+        Bus signals on any port are expanded to their leaf scalar values in
+        depth-first order.  Bus signals may be either flat float64 ndarrays
+        (post-compile fast path) or plain dicts (unit-test fallback path).
+        Plain scalar ports pass through unchanged.
 
         Returns
         -------
@@ -273,12 +275,13 @@ class Scope(Block):
         """
         raw = self.inputs.to_array()
 
-        # Fast path: no bus signals present
+        # Fast path: no bus signals present (all scalar, float-dtype register)
         if raw.dtype != object:
             return raw
 
         # Lazy configuration: first call with object-dtype inputs.
-        # Walk the current values to discover which ports carry dicts.
+        # _bus_ports may already be set by Simulation._build_bus_layout() (ndarray path)
+        # or via Scope(bus=) constructor, or will be discovered now (dict path).
         if self._bus_ports is None:
             discovered = {}
             for i, val in enumerate(raw):
@@ -296,16 +299,24 @@ class Scope(Block):
                             lbs.append(f"port {i}")
                     self.labels = lbs
             else:
-                # No dicts yet (FPI transient — all ports still hold zero).
-                # Return zeros with the correct length so recording stays
-                # consistent; proper expansion happens on the next sample.
+                # No dicts and no injected _bus_ports — FPI transient (all zeros).
+                # Return zeros with the correct length so recording stays consistent.
                 return np.zeros(len(raw))
 
-        # Collect scalars, expanding bus dicts using the configured paths
+        # _bus_ports is set — expand bus ports (ndarray fast path or dict fallback)
         row = []
         for i, val in enumerate(raw):
-            if i in self._bus_ports and isinstance(val, dict):
-                row.extend(_flatten_bus(val, self._bus_ports[i]))
+            if i in self._bus_ports:
+                n = len(self._bus_ports[i])
+                if isinstance(val, np.ndarray) and len(val) >= n:
+                    # Fast path: flat ndarray from compiled bus
+                    row.extend(val[:n].tolist())
+                elif isinstance(val, dict):
+                    # Dict fallback path
+                    row.extend(_flatten_bus(val, self._bus_ports[i]))
+                else:
+                    # FPI zero-init or unconnected — pad with zeros
+                    row.extend([0.0] * n)
             else:
                 try:
                     row.append(float(val))

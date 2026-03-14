@@ -1,4 +1,5 @@
 import warnings
+import numpy as np
 import pytest
 from pathsim.blocks.sources import Constant
 from pathsim.blocks.buses import BusCreator, BusSelector, BusMerge
@@ -31,18 +32,26 @@ def test_bus_creator_and_selector():
     bus_creator.inputs['b'] = c2.outputs['out']
     bus_creator.update()
 
-    bus_selector.inputs['bus'] = bus_creator.outputs['bus']
+    # BusCreator now outputs a flat float64 ndarray (not a dict).
+    buf = bus_creator.outputs['bus']
+    assert isinstance(buf, np.ndarray)
+    assert buf[0] == pytest.approx(1.23)  # 'a' is at flat index 0
+    assert buf[1] == pytest.approx(4.56)  # 'b' is at flat index 1
+
+    # BusSelector fast path requires _flat_indices injected by Simulation.
+    # Simulate the compile step manually for unit-test isolation.
+    bus_selector._flat_indices = np.array([0], dtype=np.intp)
+    bus_selector.inputs['bus'] = buf
     bus_selector.update()
+
+    # Check that the selector output is correct
+    assert bus_selector.outputs['a'] == pytest.approx(1.23)
 
     scope.inputs[0] = bus_selector.outputs['a']
     scope.update(0)
 
-    # Check that the bus creator output is correct
-    assert bus_creator.outputs['bus'] == {'a': 1.23, 'b': 4.56}
-    # Check that the selector output is correct
-    assert bus_selector.outputs['a'] == 1.23
     # Check that the scope input is correct
-    assert scope.inputs[0] == 1.23
+    assert scope.inputs[0] == pytest.approx(1.23)
 
 
 # BusMerge unit tests ===================================================================

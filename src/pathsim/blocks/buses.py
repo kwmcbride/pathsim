@@ -12,6 +12,8 @@
 import re
 import logging
 
+import numpy as np
+
 from ._block import Block
 from ..utils.register import Register
 
@@ -23,7 +25,11 @@ _log = logging.getLogger('pathsim.blocks.buses')
 
 # PUBLIC API =============================================================================
 
-__all__ = ['BusCreator', 'BusSelector', 'BusMerge', 'BusFunction']
+__all__ = [
+    'BusCreator', 'BusSelector', 'BusMerge', 'BusFunction',
+    # Role markers — consumed by Simulation._build_bus_layout()
+    '_BusProducer', '_BusMerger', '_BusConsumer',
+]
 
 
 # VALID CONFLICT MODES =================================================================
@@ -43,15 +49,93 @@ def _validate_dot_keys(keys, block_name):
             )
 
 
+# MODULE-LEVEL HELPERS ==================================================================
+
+def _bus_leaf_count(bus):
+    """Return the total number of leaf (scalar) signals in a Bus schema."""
+    from ..bus import Bus
+    n = 0
+    for elem in bus.elements:
+        if isinstance(elem.data_type, Bus):
+            n += _bus_leaf_count(elem.data_type)
+        else:
+            n += 1
+    return n
+
+
+def _bus_key_index_map(bus, prefix='', start=0):
+    """Build ``{dot_path: flat_int_index}`` for every leaf in *bus*.
+
+    Returns ``(map, next_idx)`` where *next_idx* is the next unused flat index.
+    Traversal order is depth-first, matching BusCreator key layout.
+    """
+    from ..bus import Bus
+    m, idx = {}, start
+    for elem in bus.elements:
+        key = f"{prefix}{elem.name}" if prefix else elem.name
+        if isinstance(elem.data_type, Bus):
+            sub, idx = _bus_key_index_map(elem.data_type, key + '.', idx)
+            m.update(sub)
+        else:
+            m[key] = idx
+            idx += 1
+    return m, idx
+
+
+def _bus_key_layout(bus, prefix='', start=0):
+    """Build ``[(key, start_idx, size), ...]`` for packing inputs into a flat buffer.
+
+    For leaf elements, ``size=1`` and ``start_idx`` is the flat index.
+    For nested Bus elements, ``size`` is the number of leaves and the caller is expected
+    to have a nested ndarray for that key.
+
+    Returns ``(layout_list, next_idx)``.
+    """
+    from ..bus import Bus
+    layout = []
+    idx = start
+    for elem in bus.elements:
+        key = (f"{prefix}{elem.name}" if prefix else elem.name).split('.')[-1]
+        if isinstance(elem.data_type, Bus):
+            sub_count = _bus_leaf_count(elem.data_type)
+            layout.append((elem.name, idx, sub_count))
+            idx += sub_count
+        else:
+            layout.append((elem.name, idx, 1))
+            idx += 1
+    return layout, idx
+
+
+# ROLE MARKER MIXINS ====================================================================
+# Simulation._build_bus_layout() uses these to identify block roles without
+# importing concrete class names.  If a block is renamed or a new bus block is
+# added, only buses.py needs to change — simulation.py stays stable.
+
+class _BusProducer:
+    """Mixin: block that generates a flat float64 ndarray bus output (has _out_index_map).
+    BusCreator and BusFunction inherit this (pass-1 producers — no upstream bus deps)."""
+
+class _BusMerger:
+    """Mixin: block that merges upstream buses into a new bus (has _out_index_map +
+    _copy_plan).  Processed in pass 2 because it needs upstream _out_index_maps first."""
+
+class _BusConsumer:
+    """Mixin: block that reads from a flat ndarray bus input (has _flat_indices or
+    _in_flat_indices).  BusSelector and BusFunction inherit this (pass-3 consumers)."""
+
+
 # MISO BLOCKS ===========================================================================
 
-class BusCreator(Block):
-    """Combines multiple input signals into a structured bus (dict) output.
+class BusCreator(_BusProducer, Block):
+    """Combines multiple input signals into a structured bus (flat float64 ndarray) output.
 
-    Takes N named scalar inputs and packs them into a single Python dict
-    that is passed downstream as one signal.  The dict keys are the signal
-    names; nested buses are supported by connecting the output of one
-    BusCreator to a named input port of another.
+    Takes N named scalar inputs and packs them into a pre-allocated float64 buffer
+    that is passed downstream as a single signal.  Nested buses are supported by
+    connecting the output of one BusCreator to a named input port of another.
+
+    At build time (``Simulation._build_bus_layout``), downstream blocks receive
+    pre-computed flat indices so that every FPI read is a single numpy fancy-index
+    operation rather than a dict traversal.
 
     Parameters
     ----------
@@ -90,6 +174,15 @@ class BusCreator(Block):
         self.inputs  = Register(mapping=self.input_port_labels, dtype=object)
         self.outputs = Register(mapping=self.output_port_labels, dtype=object)
 
+        # Pre-allocated flat float64 output buffer (build-time, always present)
+        self._n = _bus_leaf_count(self.bus)
+        self._buf = np.zeros(self._n)
+        # Key layout: list of (input_key, flat_start, size)
+        self._key_layout, _ = _bus_key_layout(self.bus)
+
+        # Build-time index map for downstream injection (set during _build_bus_layout)
+        self._out_index_map = None
+
 
     def __repr__(self):
         bus_name = self.bus.name
@@ -102,22 +195,32 @@ class BusCreator(Block):
         super().reset()
 
     def update(self, t=None):
-        bus = self.outputs['bus']
-        if isinstance(bus, dict):
-            # Update in-place to avoid dict allocation on every RK stage.
-            for k in self.keys:
-                bus[k] = self.inputs[k]
-        else:
-            # First call: allocate the dict once.
-            self.outputs['bus'] = {k: self.inputs[k] for k in self.keys}
+        for key, start, size in self._key_layout:
+            val = self.inputs[key]
+            if size == 1:
+                try:
+                    self._buf[start] = float(val)
+                except (TypeError, ValueError):
+                    self._buf[start] = 0.0
+            else:
+                # Nested bus: val should be a flat ndarray from another BusCreator
+                if isinstance(val, np.ndarray) and len(val) >= size:
+                    self._buf[start:start + size] = val[:size]
+                # else: leave zeros in buffer (nested bus not yet ready or disconnected)
+        # Re-store buffer reference if register was reset (register.reset() clears to 0)
+        if self.outputs['bus'] is not self._buf:
+            self.outputs['bus'] = self._buf
 
 
-class BusSelector(Block):
-    """Selects one or more signals from a bus dict and outputs them individually.
+class BusSelector(_BusConsumer, Block):
+    """Selects one or more signals from a bus (flat float64 ndarray) and outputs them.
 
-    Takes a single bus (dict) input and extracts the requested keys as
-    separate scalar outputs.  Dot-notation is supported for nested buses
-    (e.g. ``'Sensors.Temperature'``).
+    Takes a single bus input and extracts the requested keys as separate scalar outputs.
+    Dot-notation is supported for nested buses (e.g. ``'Sensors.Temperature'``).
+
+    At build time (``Simulation._build_bus_layout``), ``_flat_indices`` is injected so
+    that each FPI read is a single numpy fancy-index operation.  Without a simulation
+    (unit tests), the block falls back to the dict-traversal path.
 
     Parameters
     ----------
@@ -143,11 +246,15 @@ class BusSelector(Block):
         # Pre-split dot paths once at init — avoids repeated str.split() in update()
         self._paths  = [tuple(k.split('.')) for k in self.keys]
         self.inputs  = Register(mapping=self.input_port_labels,  dtype=object)
-        self.outputs = Register(mapping=self.output_port_labels, dtype=object)
+        # Float64 outputs: BusSelector extracts individual scalar signals, not buses.
+        # Pre-size to len(keys) so the fast path writes all in one slice.
+        self.outputs = Register(mapping=self.output_port_labels, size=len(keys))
         # Keys that have already triggered a missing-key warning (warn once per key)
         self._warned_missing = set()
         # Logger — replaced by Simulation with sim.logger so PathView sees it
         self._logger = _log
+        # Injected by Simulation._build_bus_layout() — None means "not yet compiled"
+        self._flat_indices = None
 
 
     def __repr__(self):
@@ -159,21 +266,30 @@ class BusSelector(Block):
         self._warned_missing.clear()
 
     def update(self, t=None):
-        bus = self.inputs['bus']
-        if not isinstance(bus, dict):
-            # Register initialises object-dtype entries to 0; that is the expected
-            # transient value during the first FPI iteration before the upstream
-            # BusCreator has run.  Anything else is a likely mis-connection.
-            if not (isinstance(bus, (int, float)) and bus == 0):
+        buf = self.inputs['bus']
+
+        if isinstance(buf, np.ndarray):
+            if self._flat_indices is not None:
+                # Fast path: single numpy fancy-index operation
+                self.outputs._data[:len(self.keys)] = buf[self._flat_indices]
+                return
+            # ndarray but no indices injected yet — no-op (should not happen in sim)
+            return
+
+        # Not an ndarray: dict fallback (unit tests) or FPI zero / wrong type
+        if not isinstance(buf, dict):
+            if not (isinstance(buf, (int, float)) and buf == 0):
                 self._logger.warning(
                     "BusSelector received a non-dict input of type %r. "
                     "Expected a bus dict from a BusCreator. "
                     "Check that the connected output port carries a bus signal.",
-                    type(bus).__name__,
+                    type(buf).__name__,
                 )
             return
+
+        # Dict fallback path — unit tests without sim.run()
         for key, path in zip(self.keys, self._paths):
-            val = bus
+            val = buf
             missing = False
             for part in path:
                 if isinstance(val, dict):
@@ -190,18 +306,19 @@ class BusSelector(Block):
                 self._logger.info(
                     "BUS WARNING: BusSelector key %r not found in bus. "
                     "Available keys: %s. Output will be 0.0.",
-                    key, list(bus.keys()),
+                    key, list(buf.keys()),
                 )
                 self._warned_missing.add(key)
             self.outputs[key] = val
 
 
-class BusMerge(Block):
+class BusMerge(_BusMerger, Block):
     """Merges N bus inputs into a single bus output.
 
-    Takes *n* bus (dict) inputs and combines their key-value pairs into one
-    output bus dict.  When the same key appears in more than one input bus,
-    the *on_conflict* policy determines the outcome.
+    Takes *n* bus inputs and combines their signals into one output bus.
+    At build time (``Simulation._build_bus_layout``), a copy plan is injected
+    so that each FPI merge is a set of pre-sized numpy slice copies.
+    Without a simulation (unit tests), falls back to dict-merge logic.
 
     Parameters
     ----------
@@ -249,6 +366,11 @@ class BusMerge(Block):
         self._warned_conflicts = set()
         # Logger — replaced by Simulation with sim.logger so PathView sees it
         self._logger = _log
+        # Injected by Simulation._build_bus_layout() — None means "not yet compiled"
+        self._copy_plan = None   # list of (dst_start, dst_end, src_input_key)
+        self._buf = None         # pre-allocated flat float64 merge buffer
+        # Build-time output index map for downstream injection
+        self._out_index_map = None
 
 
     def __repr__(self):
@@ -262,6 +384,19 @@ class BusMerge(Block):
 
 
     def update(self, t=None):
+        if self._copy_plan is not None:
+            # Fast path: copy slices from input flat ndarrays into merged buffer
+            for dst_start, dst_end, src_key in self._copy_plan:
+                src = self.inputs[src_key]
+                if isinstance(src, np.ndarray):
+                    size = dst_end - dst_start
+                    self._buf[dst_start:dst_end] = src[:size]
+                # else: input not yet ready (FPI zero) — leave zeros in buffer
+            if self.outputs['bus'] is not self._buf:
+                self.outputs['bus'] = self._buf
+            return
+
+        # Dict fallback path — unit tests without sim.run()
         bus_out = self.outputs['bus']
         if not isinstance(bus_out, dict):
             bus_out = {}
@@ -273,8 +408,6 @@ class BusMerge(Block):
         for i in range(self.n):
             bus_in = self.inputs[f'bus_{i}']
             if not isinstance(bus_in, dict):
-                # FPI transient (value is 0) or wrong connection — skip silently.
-                # BusSelector already warns for wrong types; no need to duplicate.
                 continue
             for key, val in bus_in.items():
                 if key in bus_out:
@@ -301,16 +434,17 @@ class BusMerge(Block):
 
 # SISO TRANSFORM BLOCK ====================================================================
 
-class BusFunction(Block):
+class BusFunction(_BusProducer, _BusConsumer, Block):
     """Applies a callable to selected signals in a bus and produces a new bus output.
 
-    Takes a single bus (dict) input, extracts the signals named by
-    *in_keys* (dot-notation supported for nested buses), calls *func*
-    with those values as positional arguments, and packs the return
-    values into a new bus dict keyed by *out_keys*.
+    Takes a single bus input, extracts the signals named by *in_keys*
+    (dot-notation supported for nested buses), calls *func* with those values
+    as positional arguments, and packs the return values into an output bus keyed
+    by *out_keys*.
 
-    This avoids the ``BusSelector → processing_block(s) → BusCreator``
-    boilerplate for simple per-signal transformations.
+    At build time (``Simulation._build_bus_layout``), ``_in_flat_indices`` is injected
+    so that extraction is a single numpy fancy-index operation.  Without a simulation
+    (unit tests), falls back to dict traversal.
 
     Parameters
     ----------
@@ -379,6 +513,11 @@ class BusFunction(Block):
         self._warned_missing = set()
         # Logger — replaced by Simulation with sim.logger so PathView sees it
         self._logger = _log
+        # Injected by Simulation._build_bus_layout() — None means "not yet compiled"
+        self._in_flat_indices = None   # np.ndarray of np.intp
+        self._out_buf = None           # pre-allocated float64 output buffer
+        # Build-time output index map for downstream injection
+        self._out_index_map = None
 
 
     def __repr__(self):
@@ -408,21 +547,38 @@ class BusFunction(Block):
 
 
     def update(self, t=None):
-        bus = self.inputs['bus']
-        if not isinstance(bus, dict):
-            if not (isinstance(bus, (int, float)) and bus == 0):
+        buf = self.inputs['bus']
+
+        if isinstance(buf, np.ndarray):
+            if self._in_flat_indices is not None:
+                # Fast path: extract inputs via fancy-index, apply func, write to _out_buf
+                vals = buf[self._in_flat_indices]
+                result = self.func(*vals)
+                if len(self.out_keys) == 1:
+                    self._out_buf[0] = result
+                else:
+                    self._out_buf[:] = result
+                if self.outputs['bus'] is not self._out_buf:
+                    self.outputs['bus'] = self._out_buf
+                return
+            # ndarray but no indices — no-op
+            return
+
+        # Not an ndarray: dict fallback (unit tests) or FPI zero / wrong type
+        if not isinstance(buf, dict):
+            if not (isinstance(buf, (int, float)) and buf == 0):
                 self._logger.warning(
                     "BusFunction received a non-dict input of type %r. "
                     "Expected a bus dict from a BusCreator. "
                     "Check that the connected output port carries a bus signal.",
-                    type(bus).__name__,
+                    type(buf).__name__,
                 )
             return
 
-        # Extract input values (dot-notation supported).
+        # Dict fallback path — unit tests without sim.run()
         vals = []
         for key, path in zip(self.in_keys, self._in_paths):
-            val = bus
+            val = buf
             missing = False
             for part in path:
                 if isinstance(val, dict):
@@ -439,7 +595,7 @@ class BusFunction(Block):
                 self._logger.info(
                     "BUS WARNING: BusFunction key %r not found in bus. "
                     "Available keys: %s. Output will be 0.0.",
-                    key, list(bus.keys()),
+                    key, list(buf.keys()),
                 )
                 self._warned_missing.add(key)
             vals.append(val)
