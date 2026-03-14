@@ -37,25 +37,28 @@ class BusCreator(Block):
 
     Parameters
     ----------
-    keys : list[str | BusElement] | Bus
-        Either a ``Bus`` object (or passed as the first positional arg) that
-        defines the signal names, or a plain list of string / ``BusElement``
-        names.
-    bus : Bus, optional
-        Deprecated positional form — prefer passing a ``Bus`` as *keys*.
+    bus : Bus | list[str | BusElement]
+        Either a ``Bus`` object that defines the signal names and schema
+        metadata, or a plain list of string / ``BusElement`` names (which
+        is auto-wrapped into an anonymous ``Bus`` internally).
     """
 
-    def __init__(self, keys=None, bus=None, **kwargs):
-        from ..bus import Bus
-        if bus is not None:
+    def __init__(self, bus, **kwargs):
+        from ..bus import Bus, BusElement
+        if isinstance(bus, Bus):
             self.bus = bus
-            self.keys = [e.name for e in bus.elements]
-        elif isinstance(keys, Bus):
-            self.bus = keys
-            self.keys = [e.name for e in keys.elements]
+        elif isinstance(bus, list):
+            self.bus = Bus('', elements=[
+                BusElement(k if isinstance(k, str) else k.name) for k in bus
+            ])
         else:
-            self.bus = None
-            self.keys = [k.name if hasattr(k, 'name') else k for k in keys]
+            raise TypeError(
+                f"BusCreator: 'bus' must be a Bus object or a list of string keys, "
+                f"got {type(bus).__name__!r}."
+            )
+        self.keys = [e.name for e in self.bus.elements]
+        if len(self.keys) == 0:
+            raise ValueError("BusCreator: bus must have at least one element.")
         seen = set()
         for k in self.keys:
             if k in seen:
@@ -71,8 +74,8 @@ class BusCreator(Block):
 
 
     def __repr__(self):
-        bus_name = self.bus.name if self.bus is not None else None
-        if bus_name is not None:
+        bus_name = self.bus.name
+        if bus_name:
             return f"BusCreator(bus={bus_name!r}, keys={self.keys})"
         return f"BusCreator(keys={self.keys})"
 

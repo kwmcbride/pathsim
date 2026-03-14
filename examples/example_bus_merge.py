@@ -89,7 +89,7 @@ fb_A     = Amplifier(-k_A)           # negative feedback
 dTdt_A   = Adder('++')               # dT_A/dt = set_A_const + fb_A(T_A)
 hum_A    = Constant(55.0)            # %RH
 
-creator_A = BusCreator(keys=zone_bus_def)   # reuses shared schema
+creator_A = BusCreator(zone_bus_def)   # reuses shared schema
 
 
 # ZONE B — thermal dynamics =============================================================
@@ -104,7 +104,7 @@ fb_B     = Amplifier(-k_B)
 dTdt_B   = Adder('++')
 hum_B    = Constant(42.0)
 
-creator_B = BusCreator(keys=zone_bus_def)   # same definition, different instance
+creator_B = BusCreator(zone_bus_def)   # same definition, different instance
 
 
 # OUTDOOR WEATHER STATION ===============================================================
@@ -112,7 +112,7 @@ creator_B = BusCreator(keys=zone_bus_def)   # same definition, different instanc
 T_out = Constant(8.0)    # C
 wind  = Constant(3.5)    # m/s
 
-creator_out = BusCreator(keys=outdoor_bus_def)
+creator_out = BusCreator(outdoor_bus_def)
 
 
 # NAMESPACE + MERGE =====================================================================
@@ -121,7 +121,7 @@ creator_out = BusCreator(keys=outdoor_bus_def)
 # keys before merging, avoiding the key conflict that would arise from
 # merging them directly.
 
-zones_creator = BusCreator(keys=['ZoneA', 'ZoneB'])   # accepts bus dicts as inputs
+zones_creator = BusCreator(['ZoneA', 'ZoneB'])   # accepts bus dicts as inputs
 
 # BusMerge combines the zones bundle (nested dict) with the flat outdoor bus.
 merger = BusMerge(n=2)

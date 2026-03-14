@@ -548,16 +548,11 @@ class Simulation:
                 continue
 
             # Build valid schema for this BusCreator.
-            if src.bus is not None:
-                valid = set(_bus_valid_paths(src.bus.structure_dict()))
-                plain = False
-            else:
-                valid = set(src.keys)
-                plain = True   # only top-level check for plain-key creators
+            valid = set(_bus_valid_paths(src.bus.structure_dict()))
 
             for trg_ref in conn.targets:
                 self._trace_bus_forward(
-                    trg_ref.block, trg_ref.ports[0], valid, plain, src,
+                    trg_ref.block, trg_ref.ports[0], valid, src,
                     current_conns=connections,
                 )
 
@@ -566,7 +561,7 @@ class Simulation:
             self._check_bus_schemas(sub.connections)
 
 
-    def _trace_bus_forward(self, block, in_port, valid, plain, origin,
+    def _trace_bus_forward(self, block, in_port, valid, origin,
                            current_conns, conns_stack=None, _depth=0):
         """Follow a bus signal forward and warn for BusSelectors with missing keys.
 
@@ -578,8 +573,6 @@ class Simulation:
             Input port index on *block*.
         valid : set[str]
             Valid dot-path keys for this bus schema.
-        plain : bool
-            True → only top-level key checking (plain-list BusCreator).
         origin : BusCreator
             The originating BusCreator (used in warning messages).
         current_conns : iterable
@@ -598,10 +591,7 @@ class Simulation:
         from .subsystem import Subsystem, Interface
 
         if isinstance(block, BusSelector):
-            if plain:
-                missing = [k for k in block.keys if k.split('.')[0] not in valid]
-            else:
-                missing = [k for k in block.keys if k not in valid]
+            missing = [k for k in block.keys if k not in valid]
             if missing:
                 self.logger.info(
                     f"BUS WARNING: {block!r} requests key(s) {missing!r} "
@@ -618,7 +608,7 @@ class Simulation:
                         and inner_conn.source.ports[0] == in_port):
                     for inner_trg in inner_conn.targets:
                         self._trace_bus_forward(
-                            inner_trg.block, inner_trg.ports[0], valid, plain, origin,
+                            inner_trg.block, inner_trg.ports[0], valid, origin,
                             current_conns=block.connections,
                             conns_stack=new_stack,
                             _depth=_depth + 1,
@@ -637,7 +627,7 @@ class Simulation:
                             and outer_conn.source.ports[0] == in_port):
                         for outer_trg in outer_conn.targets:
                             self._trace_bus_forward(
-                                outer_trg.block, outer_trg.ports[0], valid, plain, origin,
+                                outer_trg.block, outer_trg.ports[0], valid, origin,
                                 current_conns=outer_conns,
                                 conns_stack=remaining_stack,
                                 _depth=_depth + 1,

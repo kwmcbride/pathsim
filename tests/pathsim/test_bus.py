@@ -33,10 +33,10 @@ class BusSimulation:
         speed = Constant(value=55)
 
         # Algebraic blocks
-        sensor_bus = BusCreator(keys=sensor_bus_def)
-        vehicle_bus = BusCreator(keys=vehicle_bus_def)
+        sensor_bus = BusCreator(sensor_bus_def)
+        vehicle_bus = BusCreator(vehicle_bus_def)
         busselector = BusSelector(keys=['Speed', 'Sensors.Temperature'])
-        buscreator = BusCreator(keys=['a', 'b'])
+        buscreator = BusCreator(['a', 'b'])
         block_8 = BusSelector(keys=['b'])
 
         # Recording
@@ -120,7 +120,7 @@ def test_bus_through_subsystem():
     iface = Interface()
     c1 = Constant(3.0)
     c2 = Constant(7.0)
-    creator = BusCreator(keys=bus_def)
+    creator = BusCreator(bus_def)
     sub_blocks = [iface, c1, c2, creator]
     sub_connections = [
         Connection(c1[0], creator['x']),
@@ -157,7 +157,7 @@ def test_bus_through_nested_subsystems():
     iface_inner = Interface()
     c1 = Constant(10.0)
     c2 = Constant(20.0)
-    creator = BusCreator(keys=bus_def)
+    creator = BusCreator(bus_def)
     inner_blocks = [iface_inner, c1, c2, creator]
     inner_connections = [
         Connection(c1[0], creator['a']),
@@ -293,13 +293,13 @@ def test_bus_element_unit_default_is_empty_string():
 
 def test_bus_creator_repr_with_bus():
     bus_def = Bus('sensors', elements=[BusElement('x'), BusElement('y')])
-    creator = BusCreator(keys=bus_def)
+    creator = BusCreator(bus_def)
     r = repr(creator)
     assert 'BusCreator' in r and 'sensors' in r and 'x' in r
 
 
 def test_bus_creator_repr_plain_keys():
-    creator = BusCreator(keys=['a', 'b'])
+    creator = BusCreator(['a', 'b'])
     r = repr(creator)
     assert 'BusCreator' in r and 'a' in r and 'b' in r
 
@@ -349,7 +349,7 @@ def test_bus_nested_equality():
 
 
 def test_bus_creator_reset_clears_output():
-    creator = BusCreator(keys=['x', 'y'])
+    creator = BusCreator(['x', 'y'])
     creator.inputs['x'] = 1.0
     creator.inputs['y'] = 2.0
     creator.update()
@@ -417,8 +417,18 @@ def test_validate_nested_missing_key():
 
 
 def test_bus_creator_duplicate_keys():
-    with pytest.raises(ValueError, match="[Dd]uplicate"):
-        BusCreator(keys=['x', 'y', 'x'])
+    with pytest.raises(ValueError):
+        BusCreator(['x', 'y', 'x'])
+
+
+def test_bus_creator_empty_list_raises():
+    with pytest.raises(ValueError, match="at least one element"):
+        BusCreator([])
+
+
+def test_bus_creator_invalid_type_raises():
+    with pytest.raises(TypeError, match="Bus object or a list"):
+        BusCreator(42)
 
 
 def test_bus_selector_duplicate_keys():
@@ -462,7 +472,7 @@ def test_bus_connection_works_in_simulation():
     from pathsim import Simulation, BusConnection
     c1 = Constant(1.0)
     c2 = Constant(2.0)
-    creator = BusCreator(keys=['a', 'b'])
+    creator = BusCreator(['a', 'b'])
     selector = BusSelector(keys=['a', 'b'])
     scope = Scope()
     blocks = [c1, c2, creator, selector, scope]
@@ -596,7 +606,7 @@ def test_scope_bus_direct_connection_flat():
     bus_def = Bus('b', elements=[BusElement('x'), BusElement('y')])
     c1 = Constant(3.0)
     c2 = Constant(7.0)
-    creator = BusCreator(keys=bus_def)
+    creator = BusCreator(bus_def)
     scope = Scope(bus=bus_def)
 
     blocks = [c1, c2, creator, scope]
@@ -625,8 +635,8 @@ def test_scope_bus_direct_connection_nested():
     c_val = Constant(1.0)
     c_a   = Constant(2.0)
     c_b   = Constant(3.0)
-    inner_creator = BusCreator(keys=inner)
-    outer_creator = BusCreator(keys=outer)
+    inner_creator = BusCreator(inner)
+    outer_creator = BusCreator(outer)
     scope = Scope(bus=outer)
 
     blocks = [c_val, c_a, c_b, inner_creator, outer_creator, scope]
@@ -653,7 +663,7 @@ def test_scope_lazy_bus_detection():
     bus_def = Bus('b', elements=[BusElement('p'), BusElement('q')])
     c1 = Constant(10.0)
     c2 = Constant(20.0)
-    creator = BusCreator(keys=bus_def)
+    creator = BusCreator(bus_def)
     scope = Scope()   # no bus= — lazy detection
 
     blocks = [c1, c2, creator, scope]
@@ -674,7 +684,7 @@ def test_scope_lazy_bus_detection():
 def test_scope_lazy_auto_labels():
     """Lazy detection sets self.labels from the dict key paths."""
     bus_def = Bus('b', elements=[BusElement('alpha'), BusElement('beta')])
-    creator = BusCreator(keys=bus_def)
+    creator = BusCreator(bus_def)
     c1 = Constant(1.0)
     c2 = Constant(2.0)
     scope = Scope()
@@ -700,8 +710,8 @@ def test_busmerge_simulation_two_buses():
     ca1 = Constant(1.0)
     ca2 = Constant(2.0)
     cb1 = Constant(3.0)
-    creator_a = BusCreator(keys=bus_a)
-    creator_b = BusCreator(keys=bus_b)
+    creator_a = BusCreator(bus_a)
+    creator_b = BusCreator(bus_b)
     merger    = BusMerge(n=2)
     selector  = BusSelector(keys=['x', 'y', 'z'])
     scope     = Scope()
@@ -735,8 +745,8 @@ def test_busmerge_simulation_direct_scope():
     merged_bus = Bus('merged', elements=[BusElement('p'), BusElement('q'), BusElement('r')])
 
     c1, c2, c3 = Constant(10.0), Constant(20.0), Constant(30.0)
-    creator_a = BusCreator(keys=bus_a)
-    creator_b = BusCreator(keys=bus_b)
+    creator_a = BusCreator(bus_a)
+    creator_b = BusCreator(bus_b)
     merger    = BusMerge(n=2)
     scope     = Scope(bus=merged_bus)
 
@@ -764,7 +774,7 @@ def test_scope_bus_resets_correctly():
     bus_def = Bus('b', elements=[BusElement('x'), BusElement('y')])
     c1 = Constant(5.0)
     c2 = Constant(6.0)
-    creator = BusCreator(keys=bus_def)
+    creator = BusCreator(bus_def)
     scope = Scope(bus=bus_def)
 
     blocks = [c1, c2, creator, scope]
@@ -806,7 +816,7 @@ def test_schema_valid_no_warning(pathsim_logs):
     """Valid BusCreator → BusSelector: no BUS WARNING emitted."""
     zone_bus = _make_zone_bus()
     c1 = Constant(20.0); c2 = Constant(55.0)
-    creator  = BusCreator(keys=zone_bus)
+    creator  = BusCreator(zone_bus)
     selector = BusSelector(['Temperature', 'Humidity'])
     Simulation([c1, c2, creator, selector], [
         Connection(c1[0],      creator['Temperature']),
@@ -821,7 +831,7 @@ def test_schema_missing_key_warns(pathsim_logs):
     """Selector requests a key not in the bus — BUS WARNING is emitted."""
     zone_bus = _make_zone_bus()
     c1 = Constant(20.0); c2 = Constant(55.0)
-    creator  = BusCreator(keys=zone_bus)
+    creator  = BusCreator(zone_bus)
     selector = BusSelector(['Temperature', 'WindSpeed'])   # WindSpeed absent
     Simulation([c1, c2, creator, selector], [
         Connection(c1[0],      creator['Temperature']),
@@ -837,7 +847,7 @@ def test_schema_all_missing_warns_once(pathsim_logs):
     """Multiple missing keys are reported in a single BUS WARNING."""
     zone_bus = _make_zone_bus()
     c1 = Constant(20.0); c2 = Constant(55.0)
-    creator  = BusCreator(keys=zone_bus)
+    creator  = BusCreator(zone_bus)
     selector = BusSelector(['WindSpeed', 'Pressure'])
     Simulation([c1, c2, creator, selector], [
         Connection(c1[0],      creator['Temperature']),
@@ -853,7 +863,7 @@ def test_schema_all_missing_warns_once(pathsim_logs):
 def test_schema_plain_keys_top_level_check(pathsim_logs):
     """BusCreator with plain string keys: top-level missing key warns."""
     c1 = Constant(1.0); c2 = Constant(2.0)
-    creator  = BusCreator(keys=['a', 'b'])
+    creator  = BusCreator(['a', 'b'])
     selector = BusSelector(['a', 'c'])   # 'c' not in ['a', 'b']
     Simulation([c1, c2, creator, selector], [
         Connection(c1[0],      creator['a']),
@@ -873,8 +883,8 @@ def test_schema_nested_valid_no_warning(pathsim_logs):
         BusElement('Outdoor', data_type='float', unit='C'),
     ])
     c1 = Constant(20.0); c2 = Constant(55.0); c3 = Constant(8.0)
-    cr_zone = BusCreator(keys=zone_bus)
-    cr_sys  = BusCreator(keys=system_bus)
+    cr_zone = BusCreator(zone_bus)
+    cr_sys  = BusCreator(system_bus)
     selector = BusSelector(['Zone.Temperature', 'Outdoor'])
     Simulation([c1, c2, c3, cr_zone, cr_sys, selector], [
         Connection(c1[0],       cr_zone['Temperature']),
@@ -895,8 +905,8 @@ def test_schema_nested_invalid_key_warns(pathsim_logs):
         BusElement('Outdoor', data_type='float', unit='C'),
     ])
     c1 = Constant(20.0); c2 = Constant(55.0); c3 = Constant(8.0)
-    cr_zone = BusCreator(keys=zone_bus)
-    cr_sys  = BusCreator(keys=system_bus)
+    cr_zone = BusCreator(zone_bus)
+    cr_sys  = BusCreator(system_bus)
     selector = BusSelector(['Zone.Temperature', 'Zone.WindSpeed'])  # WindSpeed invalid
     Simulation([c1, c2, c3, cr_zone, cr_sys, selector], [
         Connection(c1[0],       cr_zone['Temperature']),
@@ -914,7 +924,7 @@ def test_schema_no_check_through_busmerge(pathsim_logs):
     """BusCreator → BusMerge → BusSelector: no static check (indirect path)."""
     zone_bus = _make_zone_bus()
     c1 = Constant(20.0); c2 = Constant(55.0)
-    creator  = BusCreator(keys=zone_bus)
+    creator  = BusCreator(zone_bus)
     merger   = BusMerge(n=2)
     selector = BusSelector(['Temperature', 'WindSpeed'])  # missing key, but via BusMerge
     Simulation([c1, c2, creator, merger, selector], [
@@ -931,7 +941,7 @@ def test_schema_mismatch_through_subsystem(pathsim_logs):
     """BusCreator → Subsystem(passthrough) → BusSelector: schema check crosses Subsystem boundary."""
     zone_bus = _make_zone_bus()  # keys: Temperature, Humidity
     c1 = Constant(20.0); c2 = Constant(55.0)
-    creator  = BusCreator(keys=zone_bus)
+    creator  = BusCreator(zone_bus)
 
     # Build a passthrough subsystem: bus enters at port 0, exits at port 0.
     # Interface output 0 (= signal from outside) wired directly to Interface input 0
@@ -1100,7 +1110,7 @@ class TestBusFunction:
         """BusFunction inside a Simulation produces correct bus output."""
         c_T = Constant(100.0)
         c_H = Constant(50.0)
-        creator = BusCreator(keys=['Temperature', 'Humidity'])
+        creator = BusCreator(['Temperature', 'Humidity'])
         bf = BusFunction(
             lambda T, H: (T * 1.8 + 32.0, H / 100.0),
             in_keys=['Temperature', 'Humidity'],
@@ -1129,7 +1139,7 @@ class TestBusFunction:
     def test_in_simulation_scope_bus_direct(self):
         """BusFunction output connected directly to a bus-aware Scope."""
         c = Constant(20.0)
-        creator = BusCreator(keys=['T'])
+        creator = BusCreator(['T'])
         bf = BusFunction(lambda T: T + 273.15, in_keys=['T'], out_keys=['T_K'])
         out_bus = Bus('result', elements=[BusElement('T_K', unit='K')])
         scope = Scope(bus=out_bus)
@@ -1150,7 +1160,7 @@ class TestBusFunction:
     def test_chained_busfunctions(self):
         """Two BusFunctions in series compose correctly."""
         c = Constant(0.0)
-        creator = BusCreator(keys=['T_C'])
+        creator = BusCreator(['T_C'])
         to_kelvin = BusFunction(lambda T: T + 273.15, ['T_C'], ['T_K'])
         to_rankine = BusFunction(lambda T: T * 9.0 / 5.0, ['T_K'], ['T_R'])
         selector = BusSelector(['T_R'])
@@ -1174,7 +1184,7 @@ class TestBusFunction:
     def test_reset_and_rerun(self):
         """BusFunction can be reset and re-run without error."""
         c = Constant(5.0)
-        creator = BusCreator(keys=['x'])
+        creator = BusCreator(['x'])
         bf = BusFunction(lambda x: x ** 2, ['x'], ['x2'])
         selector = BusSelector(['x2'])
         scope = Scope()
