@@ -84,6 +84,46 @@ class Integrator(Block):
         self.outputs.update_from_array(self.engine.state)
 
 
+    def to_statespace(self, t):
+        """Local linear state space model of the integrator.
+
+        The integrator is already linear, so its model is exact and
+        independent of the operating point
+
+        .. math::
+
+            \\mathbf{A} = 0, \\quad \\mathbf{B} = \\mathbf{I}, \\quad
+            \\mathbf{C} = \\mathbf{I}, \\quad \\mathbf{D} = 0
+
+
+        Note
+        ----
+        The integrator carries no operators, so the generic implementation
+        of 'Block.to_statespace' cannot derive this and would reject it.
+
+        Parameters
+        ----------
+        t : float
+            evaluation time
+
+        Returns
+        -------
+        A, B, C, D : np.ndarray
+            local state space matrices of the integrator
+        """
+        #no engine assigned yet -> no state, same degradation as the base class
+        nx = len(np.atleast_1d(self.engine.state)) if self.engine else 0
+        nu = len(self.inputs.to_array())
+        ny = len(self.outputs.to_array())
+
+        return (
+            np.zeros((nx, nx)),
+            np.eye(nx, nu),
+            np.eye(ny, nx),
+            np.zeros((ny, nu))
+            )
+
+
     def derivative(self, t):
         """time derivative of the integrator state, which is just the input
 

@@ -48,6 +48,10 @@ class SampleHold(Block):
         internal scheduled event for periodic sampling
     """
 
+    #discrete time block -> no continuous time linear model
+    linearizable = False
+
+
     def __init__(self, T=1.0, tau=0.0):
         super().__init__()
 
@@ -110,6 +114,10 @@ class FirstOrderHold(Block):
     events : list[Schedule]
         internal scheduled event for periodic sampling
     """
+
+    #discrete time block -> no continuous time linear model
+    linearizable = False
+
 
     def __init__(self, T=1.0, tau=0.0):
         super().__init__()
@@ -194,6 +202,10 @@ class FIR(Block):
     events : list[Schedule]
         internal scheduled event for periodic filter evaluation
     """
+
+    #discrete time block -> no continuous time linear model
+    linearizable = False
+
 
     def __init__(self, coeffs=[1.0], T=1.0, tau=0.0):
         super().__init__()
@@ -293,6 +305,10 @@ class DiscreteIntegrator(Block):
         internal scheduled event for periodic update
     """
 
+    #discrete time block -> no continuous time linear model
+    linearizable = False
+
+
     def __init__(self, T=1.0, tau=0.0, initial_value=0.0):
         super().__init__()
 
@@ -352,6 +368,10 @@ class DiscreteDerivative(Block):
     events : list[Schedule]
         internal scheduled event for periodic update
     """
+
+    #discrete time block -> no continuous time linear model
+    linearizable = False
+
 
     def __init__(self, T=1.0, tau=0.0):
         super().__init__()
@@ -420,6 +440,10 @@ class DiscreteStateSpace(Block):
     events : list[Schedule]
         internal scheduled event for periodic update
     """
+
+    #discrete time block -> no continuous time linear model
+    linearizable = False
+
 
     def __init__(self, A=0.0, B=1.0, C=1.0, D=0.0, T=1.0, tau=0.0, initial_value=None):
         super().__init__()
@@ -547,6 +571,10 @@ class TappedDelay(Block):
     """
 
     input_port_labels = {"in": 0}
+
+    #discrete time block -> no continuous time linear model
+    linearizable = False
+
 
     def __init__(self, N=2, T=1.0, tau=0.0):
         super().__init__()

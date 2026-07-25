@@ -11,11 +11,15 @@
 # IMPORTS ===============================================================================
 
 import inspect
+import numpy as np
+
 from functools import lru_cache
 
 from ..utils.deprecation import deprecated
 from ..utils.register import Register
 from ..utils.portreference import PortReference
+from ..optim.operator import DynamicOperator
+from ..exceptions import LinearizationError
 
 
 # HELPERS ===============================================================================
@@ -103,10 +107,17 @@ class Block:
         internal callable operator for algebraic components of block
     op_dyn : DynamicOperator | None
         internal callable operator for dynamic (ODE) components of block
+    linearizable : bool
+        class level flag that declares whether the block has a valid linear
+        state space model, see 'to_statespace'
     """
 
     input_port_labels = None
     output_port_labels = None
+
+    #blocks with a switching, discontinuous or non deterministic characteristic
+    #set this to 'False' and are rejected by 'to_statespace'
+    linearizable = True
 
     def __init__(self):
 
@@ -353,18 +364,121 @@ class Block:
             event.reset()
 
 
-    def linearize(self, t):
-        """Linearize the algebraic and dynamic components of the block.
+    def to_statespace(self, t):
+        """Return the local linear state space model of the block in its
+        current operating point.
 
-        This is done by linearizing the internal 'Operator' and 'DynamicOperator' 
-        instances in the current system operating point. The operators create 
-        1st order taylor approximations internally and use them on subsequent 
-        calls after linearization.
+        .. math::
+
+            \\begin{align}
+            \\delta \\dot{x} &= \\mathbf{A} \\delta x + \\mathbf{B} \\delta u\\\\
+                   \\delta y &= \\mathbf{C} \\delta x + \\mathbf{D} \\delta u
+            \\end{align}
+
+
+        This is a pure query, the block is not modified and keeps evaluating
+        its original functions afterwards. The Jacobians come from the
+        'jac', 'jac_x' and 'jac_u' methods of the internal operators, which
+        prefer analytical Jacobians and fall back to numerical differentiation.
+
+        Blocks without operators define their linear model themselves and
+        override this method. Blocks without a valid linear model declare
+        this through the 'linearizable' class attribute.
+
+        Note
+        ----
+        This is the primitive that 'linearize' and the system level
+        linearization build on, not the other way around.
 
         Parameters
         ----------
-        t : float 
+        t : float
             evaluation time
+
+        Returns
+        -------
+        A, B, C, D : np.ndarray
+            local state space matrices of the block, shaped
+            (nx,nx), (nx,nu), (ny,nx), (ny,nu)
+
+        Raises
+        ------
+        LinearizationError
+            if the block has no valid linear model in this operating point
+        """
+
+        #block declares itself as not linearizable -> fail loudly
+        if not self.linearizable:
+            raise LinearizationError(
+                f"Block '{self.__class__.__name__}' has no linear state space "
+                "model (switching, discontinuous or non deterministic)!"
+                )
+
+        #get current state
+        u, y, x = self.get_all()
+
+        nu, ny = len(u), len(y)
+        nx = len(np.atleast_1d(x)) if self.engine else 0
+
+        #dynamics -> A, B
+        if not self.engine:
+            A, B = np.zeros((0, 0)), np.zeros((0, nu))
+        elif self.op_dyn is not None:
+            A = np.asarray(self.op_dyn.jac_x(x, u, t)).reshape(nx, nx)
+            B = np.asarray(self.op_dyn.jac_u(x, u, t)).reshape(nx, nu)
+        else:
+            #state without dynamic operator -> only the block knows its dynamics
+            raise LinearizationError(
+                f"Block '{self.__class__.__name__}' is dynamic but defines no "
+                "'op_dyn', it must override 'to_statespace'!"
+                )
+
+        #output map -> C, D
+        if self.op_alg is None:
+            if nx:
+                #state without algebraic operator -> implicit output map,
+                #only the block knows it (e.g. 'ODE' with 'y = x')
+                raise LinearizationError(
+                    f"Block '{self.__class__.__name__}' is dynamic but defines "
+                    "no 'op_alg', it must override 'to_statespace'!"
+                    )
+            #stateless without algebraic operator -> no input to output path
+            C, D = np.zeros((ny, 0)), np.zeros((ny, nu))
+
+        elif isinstance(self.op_alg, DynamicOperator):
+            #'DynamicOperator' is called with 'x=None' on stateless blocks
+            C = np.asarray(self.op_alg.jac_x(x, u, t)).reshape(ny, nx) if nx else np.zeros((ny, 0))
+            D = np.asarray(self.op_alg.jac_u(x if nx else None, u, t)).reshape(ny, nu)
+
+        else:
+            C = np.zeros((ny, nx))
+            D = np.asarray(self.op_alg.jac(u)).reshape(ny, nu)
+
+        return A, B, C, D
+
+
+    def linearize(self, t):
+        """Linearize the algebraic and dynamic components of the block.
+
+        This is done by linearizing the internal 'Operator' and 'DynamicOperator'
+        instances in the current system operating point. The operators create
+        1st order taylor approximations internally and use them on subsequent
+        calls after linearization.
+
+        Note
+        ----
+        Use 'to_statespace' if only the linear model is needed, it does not
+        switch the block over to its linear surrogate.
+
+        Parameters
+        ----------
+        t : float
+            evaluation time
+
+        Returns
+        -------
+        A, B, C, D : np.ndarray
+            local state space matrices of the block, see 'to_statespace'
         """
 
         #get current state
@@ -372,12 +486,15 @@ class Block:
 
         #no engine -> stateless
         if not self.engine:
-            #linearize only algebraic operator 
+            #linearize only algebraic operator
             if self.op_alg: self.op_alg.linearize(u)
         else:
             #linearize algebraic and dynamic operators
             if self.op_alg: self.op_alg.linearize(x, u, t)
             if self.op_dyn: self.op_dyn.linearize(x, u, t)
+
+        #hand back the linear model the operators just computed
+        return self.to_statespace(t)
 
 
     def delinearize(self):

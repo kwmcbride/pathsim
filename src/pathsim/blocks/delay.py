@@ -89,6 +89,10 @@ class Delay(Block):
         internal ring buffer for N-sample delay (discrete mode)
     """
 
+    #time delay is not finite dimensional -> no linear model
+    linearizable = False
+
+
     def __init__(self, tau=1e-3, sampling_period=None):
         super().__init__()
 

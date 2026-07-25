@@ -60,6 +60,9 @@ class Relay(Block):
     input_port_labels = {"in":0}
     output_port_labels = {"out":0}
 
+    #discontinuous switching characteristic -> no linear model
+    linearizable = False
+
     def __init__(
         self, 
         threshold_up=1.0, 

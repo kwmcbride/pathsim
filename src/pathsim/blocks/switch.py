@@ -54,6 +54,9 @@ class Switch(Block):
     input_port_labels = None
     output_port_labels = {"out":0}
 
+    #discontinuous switching characteristic -> no linear model
+    linearizable = False
+
     def __init__(self, switch_state=None):
         super().__init__()
 

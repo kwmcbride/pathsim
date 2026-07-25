@@ -64,6 +64,10 @@ class ADC(Block):
     input_port_labels = {"in": 0}
     output_port_labels = None
 
+    #quantization is discontinuous -> no linear model
+    linearizable = False
+
+
     def __init__(self, n_bits=4, span=[-1, 1], T=1, tau=0):
         super().__init__()
 
@@ -153,6 +157,10 @@ class DAC(Block):
 
     input_port_labels = None
     output_port_labels = {"out": 0}
+
+    #quantization is discontinuous -> no linear model
+    linearizable = False
+
 
     def __init__(self, n_bits=4, span=[-1, 1], T=1, tau=0):
         super().__init__()
