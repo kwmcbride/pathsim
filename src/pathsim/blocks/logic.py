@@ -29,6 +29,10 @@ class Logic(Block):
 
     """
 
+    #boolean valued, discontinuous output -> no linear model
+    linearizable = False
+
+
     def __len__(self):
         """Purely algebraic block"""
         return 1

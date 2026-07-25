@@ -39,6 +39,9 @@ class Counter(Block):
 
     input_port_labels = {"in": 0}
     output_port_labels = {"out": 0}
+
+    #integer valued, discontinuous output -> no linear model
+    linearizable = False
     
 
     def __init__(self, start=0, threshold=0.0):

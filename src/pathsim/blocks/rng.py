@@ -42,6 +42,9 @@ class RandomNumberGenerator(Block):
     input_port_labels = {}
     output_port_labels = {"out":0}
 
+    #non deterministic output -> no linear model
+    linearizable = False
+
     def __init__(self, sampling_period=None):
         super().__init__()
 

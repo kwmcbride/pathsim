@@ -113,13 +113,13 @@ class ODE(Block):
 
 
     def update(self, t):
-        """update system equation for fixed point loop, 
+        """update system equation for fixed point loop,
         here just setting the outputs
-    
+
         Note
         ----
-        the ODE block has no direct passthrough, so the 
-        'update' method is optimized for this case        
+        the ODE block has no direct passthrough, so the
+        'update' method is optimized for this case
 
         Parameters
         ----------
@@ -127,6 +127,40 @@ class ODE(Block):
             evaluation time
         """
         self.outputs.update_from_array(self.engine.state)
+
+
+    def to_statespace(self, t):
+        """Local linear state space model of the ODE block.
+
+        The dynamics come from the Jacobians of 'op_dyn', the output map is
+        the implicit identity 'y = x' of this block.
+
+        Note
+        ----
+        The ODE block defines no algebraic operator, so the generic
+        implementation of 'Block.to_statespace' cannot derive the output map.
+
+        Parameters
+        ----------
+        t : float
+            evaluation time
+
+        Returns
+        -------
+        A, B, C, D : np.ndarray
+            local state space matrices of the ODE block
+        """
+        u, y, x = self.get_all()
+
+        nu, ny = len(u), len(y)
+        nx = len(np.atleast_1d(x))
+
+        return (
+            np.asarray(self.op_dyn.jac_x(x, u, t)).reshape(nx, nx),
+            np.asarray(self.op_dyn.jac_u(x, u, t)).reshape(nx, nu),
+            np.eye(ny, nx),
+            np.zeros((ny, nu))
+            )
 
 
     def solve(self, t, dt):
