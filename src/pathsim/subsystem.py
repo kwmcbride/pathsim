@@ -17,6 +17,7 @@ from .connection import Connection
 from .blocks._block import Block
 
 from .optim.booster import ConnectionBooster
+from .optim.linearization import assemble_from_ports
 
 from .utils.graph import Graph
 from .utils.register import Register
@@ -587,17 +588,94 @@ class Subsystem(Block):
 
         Parameters
         ----------
-        t : float 
+        t : float
             evaluation time
+
+        Returns
+        -------
+        A, B, C, D : np.ndarray
+            local state space model of the subsystem, see 'to_statespace'
         """
-        for block in self.blocks: 
+        for block in self.blocks:
             block.linearize(t)
+
+        return self.to_statespace(t)
 
 
     def delinearize(self):
         """Revert the linearization of the internal blocks."""
-        for block in self.blocks: 
+        for block in self.blocks:
             block.delinearize()
+
+
+    def to_statespace(self, t):
+        """Return the linear state space model of the subsystem, seen from
+        its interface, in the current operating point.
+
+        The interface already designates what is an input and what is an
+        output, so unlike 'Simulation.to_statespace' no break and tap points
+        have to be given. This makes the subsystem boundary the natural place
+        to linearize a part of a model.
+
+        Since a 'Subsystem' is a 'Block', the result composes: a subsystem
+        nested inside another system contributes its assembled model there,
+        and hierarchies linearize hierarchically.
+
+        Note
+        ----
+        This is a pure query, the internal blocks keep evaluating their
+        original functions afterwards.
+
+        Parameters
+        ----------
+        t : float
+            evaluation time
+
+        Returns
+        -------
+        A, B, C, D : np.ndarray
+            state space model of the subsystem, shaped (nx,nx), (nx,nu),
+            (ny,nx), (ny,nu)
+
+        Raises
+        ------
+        LinearizationError
+            if an internal block has no linear model, or if the subsystem is
+            not well posed
+        """
+
+        #the interface outputs feed the internal blocks, so one external input
+        #per interface output port, driving every port it fans out to
+        n_u = len(self.interface.outputs.to_array())
+        in_cols = [[] for _ in range(n_u)]
+        for con in self.connections:
+            if con.source.block is not self.interface:
+                continue
+            for trg in con.targets:
+                for src, dst in zip(
+                    con.source._get_output_indices(), trg._get_input_indices()
+                    ):
+                    in_cols[int(src)].append((trg.block, int(dst)))
+
+        #the interface inputs collect the internal blocks, so one output row
+        #per interface input port, tapped at whatever drives it
+        n_y = len(self.interface.inputs.to_array())
+        out_rows = [None] * n_y
+        for con in self.connections:
+            for trg in con.targets:
+                if trg.block is not self.interface:
+                    continue
+                for src, dst in zip(
+                    con.source._get_output_indices(), trg._get_input_indices()
+                    ):
+                    out_rows[int(dst)] = (con.source.block, int(src))
+
+        A, B, C, D, _ = assemble_from_ports(
+            [*self.blocks, self.interface], self.connections,
+            in_cols, out_rows, t
+            )
+
+        return A, B, C, D
 
 
     # methods for discrete event management -------------------------------------------------
@@ -623,6 +701,99 @@ class Subsystem(Block):
     @property
     def outputs(self):
         return self.interface.inputs
+
+
+    @property
+    def state(self):
+        """Expose the states of the internal dynamic blocks as a single vector,
+        in the order of '_blocks_dyn'.
+
+        Note
+        ----
+        A 'Subsystem' only carries a dummy engine, it does not integrate
+        anything itself. Its state lives in the internal blocks, so the
+        inherited 'Block.state' would report the untouched dummy state instead.
+        Nested subsystems recurse through this same property.
+
+        Returns
+        -------
+        state : None | np.ndarray
+            concatenated states of the internal dynamic blocks, or 'None' if
+            the subsystem has no dynamic blocks
+        """
+        _blocks_dyn = getattr(self, "_blocks_dyn", None)
+        if not _blocks_dyn:
+            return None
+        return np.concatenate([np.atleast_1d(b.state) for b in _blocks_dyn])
+
+
+    @state.setter
+    def state(self, val):
+        """Distribute a global state vector back onto the internal dynamic
+        blocks, in the same order the getter collects it.
+
+        Parameters
+        ----------
+        val : float, np.ndarray
+            state vector to distribute over the internal dynamic blocks
+        """
+        _blocks_dyn = getattr(self, "_blocks_dyn", None)
+        if not _blocks_dyn:
+            return
+
+        _val, i = np.atleast_1d(val), 0
+        for b in _blocks_dyn:
+            n = len(np.atleast_1d(b.state))
+            b.state = _val[i:i+n]
+            i += n
+
+
+    def get_all(self):
+        """Retrieve the subsystem inputs and outputs and the recursively
+        collected states of the internal blocks.
+
+        Returns
+        -------
+        inputs : array
+            subsystem input register
+        outputs : array
+            subsystem output register
+        states : array
+            internal states of all blocks of the subsystem
+        """
+        return self()
+
+
+    def derivative(self, t):
+        """Return the time derivatives of the internal dynamic blocks,
+        concatenated in the same order as 'state'.
+
+        Blocks that do not define a derivative contribute zeros, so the result
+        always matches the length of the state vector.
+
+        Parameters
+        ----------
+        t : float
+            evaluation time
+
+        Returns
+        -------
+        dxdt : None | np.ndarray
+            time derivative of the subsystem state, or 'None' if the subsystem
+            has no dynamic blocks
+        """
+        _blocks_dyn = getattr(self, "_blocks_dyn", None)
+        if not _blocks_dyn:
+            return None
+
+        _derivatives = []
+        for b in _blocks_dyn:
+            _d = b.derivative(t)
+            if _d is None:
+                _derivatives.append(np.zeros(len(np.atleast_1d(b.state))))
+            else:
+                _derivatives.append(np.atleast_1d(_d))
+        return np.concatenate(_derivatives)
 
 
     # methods for data recording ------------------------------------------------------------

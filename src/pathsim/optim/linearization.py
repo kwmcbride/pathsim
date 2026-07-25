@@ -44,14 +44,14 @@ def _block_keys(blocks):
     return keys
 
 
-def _state_labels(blocks_dyn, keys):
+def _state_labels(x_layout, keys):
     """One label per state row, in the same order as the assembled 'A' and 'B'.
-    Multi state blocks get one label per internal state index.
+    Blocks contributing more than one state get one label per state index.
 
     Parameters
     ----------
-    blocks_dyn : list[Block]
-        blocks that carry integration state, in state vector order
+    x_layout : list[tuple[Block, int]]
+        contributing blocks and their state count, in state vector order
     keys : dict[Block: str]
         canonical identifiers from '_block_keys'
 
@@ -61,8 +61,7 @@ def _state_labels(blocks_dyn, keys):
         one label per state
     """
     labels = []
-    for blk in blocks_dyn:
-        nx = len(np.atleast_1d(blk.state))
+    for blk, nx in x_layout:
         if nx == 1:
             labels.append(keys[blk])
         else:
@@ -97,7 +96,135 @@ def _port_labels(port_refs, keys):
 
 # GLOBAL STATE SPACE ASSEMBLY ===========================================================
 
-def assemble_statespace(blocks, connections, blocks_dyn, inputs, outputs, t):
+def assemble_from_ports(blocks, connections, in_cols, out_rows, t):
+    """Assemble a global linear state space model from an explicit port level
+    description of where the system is driven and where it is measured.
+
+    This is the core of the assembly, see 'assemble_statespace' for the
+    algorithm and for the usual entry point that works on 'PortReference'.
+    The explicit form exists because the interface of a 'Subsystem' drives
+    several internal ports from one external input, which a one column per
+    port mapping cannot express.
+
+    Parameters
+    ----------
+    blocks : list[Block]
+        all blocks of the system
+    connections : list[Connection]
+        all connections of the system
+    in_cols : list[list[tuple[Block, int]]]
+        one entry per input column, each holding the (block, input row) pairs
+        that this external input drives. Existing incoming connections at
+        those ports are cut
+    out_rows : list[tuple[Block, int] | None]
+        one (block, output row) pair per output row of the model, 'None' for
+        an output that nothing drives
+    t : float
+        evaluation time for the linearization
+
+    Returns
+    -------
+    A, B, C, D : np.ndarray
+        global state space matrices
+    x_layout : list[tuple[Block, int]]
+        contributing blocks and their state count, in state vector order
+
+    Raises
+    ------
+    LinearizationError
+        if a block has no linear model, or if the diagram is not well posed
+    """
+
+    #resolve the break points -> set of (block, input row) pairs to cut
+    broken = {pair for col in in_cols for pair in col}
+
+    #collect the local models first, the state layout follows from what the
+    #blocks report and not from their integration engines. A 'Subsystem'
+    #carries only a dummy engine whose state is never written, its real states
+    #live in the internal blocks and only its local model knows about them
+    models = {blk: blk.to_statespace(t) for blk in blocks}
+
+    #column layout of the internal signal vectors 'v' (all block inputs)
+    #and 'w' (all block outputs), plus the global state vector 'x'
+    v_slices, w_slices, x_slices = {}, {}, {}
+    x_layout = []
+    n_v = n_w = n_x = 0
+    for blk in blocks:
+        n_in, n_out = len(blk.inputs.to_array()), len(blk.outputs.to_array())
+        v_slices[blk] = slice(n_v, n_v + n_in)
+        w_slices[blk] = slice(n_w, n_w + n_out)
+        n_v, n_w = n_v + n_in, n_w + n_out
+
+        nx = models[blk][0].shape[0]
+        if nx:
+            x_slices[blk] = slice(n_x, n_x + nx)
+            x_layout.append((blk, nx))
+            n_x += nx
+
+    #block diagonal stack of the local models
+    A_b, B_b = np.zeros((n_x, n_x)), np.zeros((n_x, n_v))
+    C_b, D_b = np.zeros((n_w, n_x)), np.zeros((n_w, n_v))
+    for blk in blocks:
+        _A, _B, _C, _D = models[blk]
+
+        _v, _w = v_slices[blk], w_slices[blk]
+        _x = x_slices.get(blk)
+
+        if _x is not None:
+            A_b[_x, _x] = _A
+            B_b[_x, _v] = _B
+            C_b[_w, _x] = _C
+        D_b[_w, _v] = _D
+
+    #interconnection matrix 'L', broken target ports are left open
+    L = np.zeros((n_v, n_w))
+    for con in connections:
+        src_rows = con.source._get_output_indices()
+        w_off = w_slices[con.source.block].start
+        for trg in con.targets:
+            v_off = v_slices[trg.block].start
+            for src, dst in zip(src_rows, trg._get_input_indices()):
+                if (trg.block, int(dst)) in broken:
+                    continue
+                L[v_off + int(dst), w_off + int(src)] = 1.0
+
+    #external input matrix 'M', one column may drive several ports
+    M = np.zeros((n_v, len(in_cols)))
+    for col, pairs in enumerate(in_cols):
+        for blk, row in pairs:
+            M[v_slices[blk].start + row, col] = 1.0
+
+    #eliminate the internal signals in one solve instead of forming the inverse
+    LC, LD = L @ C_b, L @ D_b
+    try:
+        GLC = np.linalg.solve(np.eye(n_v) - LD, LC)
+        GM = np.linalg.solve(np.eye(n_v) - LD, M)
+    except np.linalg.LinAlgError:
+        raise LinearizationError(
+            "System is not well posed for linearization, an algebraic loop "
+            "with unity gain survives the input break. Mark an input point "
+            "that breaks the loop."
+            ) from None
+
+    #output selection matrix 'S' picks the tapped rows out of 'w'
+    S = np.zeros((len(out_rows), n_w))
+    for row, tap in enumerate(out_rows):
+        if tap is None:
+            continue
+        blk, out = tap
+        S[row, w_slices[blk].start + out] = 1.0
+
+    #close the loop
+    return (
+        A_b + B_b @ GLC,
+        B_b @ GM,
+        S @ (C_b + D_b @ GLC),
+        S @ (D_b @ GM),
+        x_layout
+        )
+
+
+def assemble_statespace(blocks, connections, inputs, outputs, t):
     """Assemble a global linear state space model of an interconnected block
     diagram around its current operating point.
 
@@ -139,9 +266,6 @@ def assemble_statespace(blocks, connections, blocks_dyn, inputs, outputs, t):
         all blocks of the system
     connections : list[Connection]
         all connections of the system
-    blocks_dyn : list[Block]
-        the subset of 'blocks' that carry integration state, these define the
-        global state vector 'x', in order
     inputs : list[PortReference]
         break points designating free external inputs, existing incoming
         connections at these ports are cut and replaced by a free input
@@ -164,96 +288,23 @@ def assemble_statespace(blocks, connections, blocks_dyn, inputs, outputs, t):
         because an algebraic loop with unity gain survives the input break
     """
 
-    #resolve the break points -> set of (block, input row) pairs to cut
-    broken = set()
-    for pr in inputs:
-        for row in pr._get_input_indices():
-            broken.add((pr.block, int(row)))
+    #one input column per marked port, one output row per tapped port
+    in_cols = [
+        [(pr.block, int(row))] for pr in inputs for row in pr._get_input_indices()
+        ]
+    out_rows = [
+        (pr.block, int(out)) for pr in outputs for out in pr._get_output_indices()
+        ]
 
-    #column layout of the internal signal vectors 'v' (all block inputs)
-    #and 'w' (all block outputs), plus the global state vector 'x'
-    v_slices, w_slices, x_slices = {}, {}, {}
-    n_v = n_w = n_x = 0
-    for blk in blocks:
-        n_in, n_out = len(blk.inputs.to_array()), len(blk.outputs.to_array())
-        v_slices[blk] = slice(n_v, n_v + n_in)
-        w_slices[blk] = slice(n_w, n_w + n_out)
-        n_v, n_w = n_v + n_in, n_w + n_out
-    for blk in blocks_dyn:
-        nx = len(np.atleast_1d(blk.state))
-        x_slices[blk] = slice(n_x, n_x + nx)
-        n_x += nx
-
-    #block diagonal stack of the local models
-    A_b, B_b = np.zeros((n_x, n_x)), np.zeros((n_x, n_v))
-    C_b, D_b = np.zeros((n_w, n_x)), np.zeros((n_w, n_v))
-    for blk in blocks:
-        _A, _B, _C, _D = blk.to_statespace(t)
-
-        _v, _w = v_slices[blk], w_slices[blk]
-        _x = x_slices.get(blk)
-
-        if _x is not None:
-            A_b[_x, _x] = _A
-            B_b[_x, _v] = _B
-            C_b[_w, _x] = _C
-        D_b[_w, _v] = _D
-
-    #interconnection matrix 'L', broken target ports are left open
-    L = np.zeros((n_v, n_w))
-    for con in connections:
-        src_rows = con.source._get_output_indices()
-        w_off = w_slices[con.source.block].start
-        for trg in con.targets:
-            v_off = v_slices[trg.block].start
-            for src, dst in zip(src_rows, trg._get_input_indices()):
-                if (trg.block, int(dst)) in broken:
-                    continue
-                L[v_off + int(dst), w_off + int(src)] = 1.0
-
-    #external input matrix 'M'
-    n_u = sum(len(pr) for pr in inputs)
-    M = np.zeros((n_v, n_u))
-    col = 0
-    for pr in inputs:
-        v_off = v_slices[pr.block].start
-        for row in pr._get_input_indices():
-            M[v_off + int(row), col] = 1.0
-            col += 1
-
-    #eliminate the internal signals in one solve instead of forming the inverse
-    LC, LD = L @ C_b, L @ D_b
-    try:
-        GLC = np.linalg.solve(np.eye(n_v) - LD, LC)
-        GM = np.linalg.solve(np.eye(n_v) - LD, M)
-    except np.linalg.LinAlgError:
-        raise LinearizationError(
-            "System is not well posed for linearization, an algebraic loop "
-            "with unity gain survives the input break. Mark an input point "
-            "that breaks the loop."
-            ) from None
-
-    #output selection matrix 'S' picks the tapped rows out of 'w'
-    n_y = sum(len(pr) for pr in outputs)
-    S = np.zeros((n_y, n_w))
-    row = 0
-    for pr in outputs:
-        w_off = w_slices[pr.block].start
-        for out in pr._get_output_indices():
-            S[row, w_off + int(out)] = 1.0
-            row += 1
-
-    #close the loop
-    A = A_b + B_b @ GLC
-    B = B_b @ GM
-    C = S @ (C_b + D_b @ GLC)
-    D = S @ (D_b @ GM)
+    A, B, C, D, x_layout = assemble_from_ports(
+        blocks, connections, in_cols, out_rows, t
+        )
 
     keys = _block_keys(blocks)
 
     return (
         A, B, C, D,
-        _state_labels(blocks_dyn, keys),
+        _state_labels(x_layout, keys),
         _port_labels(inputs, keys),
         _port_labels(outputs, keys)
         )

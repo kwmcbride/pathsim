@@ -388,6 +388,157 @@ class TestSimulationToStateSpace(unittest.TestCase):
         self.assertTrue(np.max(np.abs((np.asarray(y_full) - y0) - y_lin)) < 1e-3)
 
 
+class TestSubsystemToStateSpace(unittest.TestCase):
+    """
+    Test the recursive block interface of 'Subsystem' and the state space
+    model it assembles from its own interface
+    """
+
+    def _build(self):
+        """subsystem with 'dx/dt = u' and 'y = 2x', driven by a constant"""
+
+        from pathsim.subsystem import Subsystem, Interface
+
+        itf, integ, gain = Interface(), Integrator(0.0), Amplifier(2.0)
+        sub = Subsystem(
+            blocks=[itf, integ, gain],
+            connections=[
+                Connection(itf, integ),
+                Connection(integ, gain),
+                Connection(gain, itf)
+                ]
+            )
+
+        src, sco = Constant(1.0), Scope()
+        Sim = Simulation(
+            blocks=[src, sub, sco],
+            connections=[Connection(src, sub), Connection(sub, sco)],
+            dt=0.01, log=False
+            )
+        return Sim, sub, integ
+
+
+    def test_state_is_recursive(self):
+        """the subsystem reports the states of its internal blocks
+
+        A 'Subsystem' only carries a dummy engine whose state is never
+        written, so the inherited property would report a placeholder.
+        """
+
+        Sim, sub, integ = self._build()
+        Sim.run(duration=1.0)
+
+        self.assertIsNotNone(sub.state)
+        self.assertEqual(len(np.atleast_1d(sub.state)), 1)
+        self.assertTrue(np.allclose(sub.state, np.atleast_1d(integ.state)))
+
+
+    def test_state_setter_distributes(self):
+        """setting the subsystem state writes through to the internal blocks"""
+
+        Sim, sub, integ = self._build()
+        Sim.run(duration=1.0)
+
+        sub.state = np.array([7.0])
+
+        self.assertTrue(np.allclose(integ.state, [7.0]))
+
+
+    def test_derivative_is_recursive(self):
+        """the derivative has the same length as the state vector"""
+
+        Sim, sub, _ = self._build()
+        Sim.run(duration=1.0)
+
+        self.assertEqual(
+            len(np.atleast_1d(sub.derivative(Sim.time))),
+            len(np.atleast_1d(sub.state))
+            )
+
+
+    def test_interface_defines_the_model(self):
+        """the interface is the input and output designation, no arguments"""
+
+        Sim, sub, _ = self._build()
+        Sim._update(0.0)
+
+        A, B, C, D = sub.to_statespace(0.0)
+
+        self.assertTrue(np.allclose(A, [[0.0]]))
+        self.assertTrue(np.allclose(B, [[1.0]]))
+        self.assertTrue(np.allclose(C, [[2.0]]))
+        self.assertTrue(np.allclose(D, [[0.0]]))
+
+
+    def test_subsystem_composes_in_system_assembly(self):
+        """a subsystem contributes its own model and states to the system
+
+        Outer system: u -> subsystem (dx/dt = u, y = 2x) -> integrator -> y,
+        so globally 'dx1/dt = u', 'dx2/dt = 2*x1' and 'y = x2'.
+        """
+
+        Sim, sub, _ = self._build()
+        integ = Integrator(0.0)
+        src, sco = Constant(0.0), Scope()
+
+        Sim = Simulation(
+            blocks=[src, sub, integ, sco],
+            connections=[
+                Connection(src, sub),
+                Connection(sub, integ),
+                Connection(integ, sco)
+                ],
+            log=False
+            )
+
+        ss = Sim.to_statespace(inputs=[sub[0]], outputs=[integ[0]])
+
+        self.assertTrue(np.allclose(ss.A, [[0, 0], [2, 0]]))
+        self.assertTrue(np.allclose(ss.B, [[1], [0]]))
+        self.assertTrue(np.allclose(ss.C, [[0, 1]]))
+        self.assertTrue(np.allclose(ss.D, [[0]]))
+
+        #the subsystem state has to appear in the global state vector
+        self.assertEqual(ss.state_labels, ["Subsystem_0", "Integrator_0"])
+
+
+    def test_nested_subsystems(self):
+        """hierarchies linearize hierarchically"""
+
+        from pathsim.subsystem import Subsystem, Interface
+
+        itf_in, integ = Interface(), Integrator(0.0)
+        inner = Subsystem(
+            blocks=[itf_in, integ],
+            connections=[Connection(itf_in, integ), Connection(integ, itf_in)]
+            )
+
+        itf_out, gain = Interface(), Amplifier(3.0)
+        outer = Subsystem(
+            blocks=[itf_out, inner, gain],
+            connections=[
+                Connection(itf_out, inner),
+                Connection(inner, gain),
+                Connection(gain, itf_out)
+                ]
+            )
+
+        src, sco = Constant(0.0), Scope()
+        Sim = Simulation(
+            blocks=[src, outer, sco],
+            connections=[Connection(src, outer), Connection(outer, sco)],
+            log=False
+            )
+        Sim._update(0.0)
+
+        A, B, C, D = outer.to_statespace(0.0)
+
+        self.assertTrue(np.allclose(A, [[0.0]]))
+        self.assertTrue(np.allclose(B, [[1.0]]))
+        self.assertTrue(np.allclose(C, [[3.0]]))
+        self.assertTrue(np.allclose(D, [[0.0]]))
+
+
 # RUN TESTS LOCALLY ====================================================================
 
 if __name__ == '__main__':

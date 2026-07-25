@@ -949,8 +949,7 @@ class Simulation:
 
         with Timer(verbose=False) as T:
             A, B, C, D, s_lbl, i_lbl, o_lbl = assemble_statespace(
-                self.blocks, self.connections, self._blocks_dyn,
-                inputs, outputs, _t
+                self.blocks, self.connections, inputs, outputs, _t
                 )
 
         self.logger.info(
