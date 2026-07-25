@@ -72,6 +72,12 @@ class StateSpace(Block):
         real valued state space matrices
     initial_value : array_like, None
         initial state / initial condition
+    state_labels, input_labels, output_labels : list[str], None
+        optional identifiers for the states, inputs and outputs of the model.
+        Models assembled by 'Simulation.to_statespace' carry the block names
+        they were built from here. These are also exactly the 'states',
+        'inputs' and 'outputs' keyword arguments of 'control.StateSpace', so
+        the model hands over to python-control without an adapter.
 
     Attributes
     ----------
@@ -81,10 +87,16 @@ class StateSpace(Block):
         internal algebraic operator for mapping to outputs
     """
 
-    def __init__(self, 
-                 A=-1.0, B=1.0, C=-1.0, D=1.0, 
-                 initial_value=None):
+    def __init__(self,
+                 A=-1.0, B=1.0, C=-1.0, D=1.0,
+                 initial_value=None,
+                 state_labels=None, input_labels=None, output_labels=None):
         super().__init__()
+
+        #optional identifiers for the rows and columns of the matrices
+        self.state_labels = state_labels
+        self.input_labels = input_labels
+        self.output_labels = output_labels
 
         #statespace matrices with input shape validation
         self.A = np.atleast_2d(A)

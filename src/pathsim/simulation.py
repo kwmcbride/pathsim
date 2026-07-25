@@ -32,6 +32,7 @@ from ._constants import (
 
 from .optim.booster import ConnectionBooster
 from .optim.anderson import Anderson
+from .optim.linearization import assemble_statespace
 
 from .utils.graph import Graph
 from .utils.analysis import Timer
@@ -44,6 +45,7 @@ from .utils.logger import LoggerManager
 from .solvers import SSPRK22, SteadyState
 
 from .blocks._block import Block
+from .blocks.lti import StateSpace
 
 from .events._event import Event
 
@@ -879,10 +881,90 @@ class Simulation:
 
     def delinearize(self):
         """Revert the linearization of the full system."""
-        for block in self.blocks: 
+        for block in self.blocks:
             block.delinearize()
 
         self.logger.info("DELINEARIZED")
+
+
+    def to_statespace(self, inputs, outputs, t=None):
+        """Assemble a global linear state space model of the interconnected
+        system around its current operating point.
+
+        The connections between the marked input and output points are
+        eliminated, so the result is a single 'StateSpace' block that
+        reproduces the small signal behaviour of the whole diagram.
+
+        Note
+        ----
+        This is a pure query. In contrast to 'linearize' the blocks keep
+        evaluating their original functions afterwards.
+
+        Example
+        -------
+        Break the loop at the reference input and tap the plant output:
+
+        .. code-block:: python
+
+            #operating point first, then the model around it
+            Sim.steadystate()
+            ss = Sim.to_statespace(inputs=[err[0]], outputs=[plant[0]])
+
+            #hand over to python-control without an adapter
+            import control
+            sys = control.StateSpace(
+                ss.A, ss.B, ss.C, ss.D,
+                states=ss.state_labels,
+                inputs=ss.input_labels,
+                outputs=ss.output_labels
+                )
+
+        Parameters
+        ----------
+        inputs : list[PortReference]
+            break points designating the free external inputs, e.g.
+            ``[plant[0]]``. Existing incoming connections at these ports are
+            cut and replaced by a free external input
+        outputs : list[PortReference]
+            tap points designating the system outputs, e.g. ``[plant[0]]``
+        t : float, None
+            evaluation time for the linearization, defaults to 'self.time'
+
+        Returns
+        -------
+        StateSpace
+            linear state space model of the system, carrying the block names
+            in its 'state_labels', 'input_labels' and 'output_labels'
+
+        Raises
+        ------
+        LinearizationError
+            if a block has no linear model, or if the diagram is not well
+            posed because an algebraic loop survives the input break
+        """
+        _t = self.time if t is None else t
+
+        #evaluate system function so all blocks are in the current state
+        self._update(_t)
+
+        with Timer(verbose=False) as T:
+            A, B, C, D, s_lbl, i_lbl, o_lbl = assemble_statespace(
+                self.blocks, self.connections, self._blocks_dyn,
+                inputs, outputs, _t
+                )
+
+        self.logger.info(
+            "TO_STATESPACE -> FINISHED (states: {}, inputs: {}, outputs: {}, runtime: {})".format(
+                A.shape[0], B.shape[1], C.shape[0], T)
+            )
+
+        return StateSpace(
+            A=A, B=B, C=C, D=D,
+            initial_value=np.zeros(A.shape[0]),
+            state_labels=s_lbl,
+            input_labels=i_lbl,
+            output_labels=o_lbl
+            )
 
 
     # event system helpers --------------------------------------------------------
