@@ -15,7 +15,9 @@ import numpy as np
 from pathsim.optim.anderson import (
     Anderson,
     NewtonAnderson,
-    solve_root
+    solve_root,
+    _factorize,
+    _singular_step
     )
 
 
@@ -237,6 +239,78 @@ class TestSolveRoot(unittest.TestCase):
         x, *_ = solve_root(NewtonAnderson(), func, np.array([1.0]), tolerance=1e-12)
         _, _, it = solve_root(NewtonAnderson(), func, x, tolerance=1e-12)
         self.assertEqual(it, 0)
+
+class TestSingularNewtonMatrix(unittest.TestCase):
+    """
+    Test the handling of a singular Newton matrix.
+
+    The Newton matrix 'jac - I' is structurally singular whenever a state's
+    derivative does not depend on that state: a 'PID's integrator has
+    'dx/dt = u', so its Jacobian row is zero. 'scipy.linalg.lu_factor' does not
+    raise on that, it warns and leaves a zero pivot, after which 'lu_solve'
+    returns inf/nan. Those propagate into the block state and only surface many
+    iterations later as an SVD failure inside the anderson least squares.
+    """
+
+    def test_factorize_rejects_singular(self):
+        """a singular matrix yields no factorization"""
+
+        self.assertIsNone(_factorize(np.array([[-50.0, 0.0], [0.0, 0.0]])))
+        self.assertIsNone(_factorize(np.zeros((2, 2))))
+        self.assertIsNone(_factorize(np.zeros((0, 0))))
+
+
+    def test_factorize_accepts_regular(self):
+        """a regular matrix factorizes and solves correctly"""
+
+        from scipy.linalg import lu_solve
+
+        A = np.array([[-50.0, 0.0], [0.0, -2.0]])
+        lu = _factorize(A)
+
+        self.assertIsNotNone(lu)
+        self.assertTrue(np.allclose(lu_solve(lu, np.array([1.0, 4.0])), [-0.02, -2.0]))
+
+
+    def test_singular_step_is_finite(self):
+        """the correction stays finite where 'lu_solve' would give inf/nan"""
+
+        A = np.array([[-50.0, 0.0], [0.0, 0.0]])
+        dx = _singular_step(A, np.array([1.0, 0.382]))
+
+        self.assertTrue(np.all(np.isfinite(dx)))
+
+        #newton on the range, no correction on the null space
+        self.assertAlmostEqual(dx[0], 1.0 / -50.0, places=12)
+        self.assertAlmostEqual(dx[1], 0.0, places=12)
+
+
+    def test_newton_step_survives_singular_jacobian(self):
+        """the vector path does not produce inf/nan"""
+
+        opt = NewtonAnderson()
+        x = np.array([0.0, 0.0])
+        g = np.array([1.0, 0.382])
+        jac = np.eye(2) + np.array([[-50.0, 0.0], [0.0, 0.0]])
+
+        y, res = opt._newton(x, g, jac)
+
+        self.assertTrue(np.all(np.isfinite(y)), f"got {y}")
+        self.assertTrue(np.isfinite(res))
+
+
+    def test_newton_step_survives_zero_scalar_jacobian(self):
+        """the scalar path does not divide by zero
+
+        'jac - 1 == 0' is the scalar face of the same singularity, and an
+        'Integrator' ('dx/dt = u') hits it exactly.
+        """
+
+        opt = NewtonAnderson()
+        y, res = opt._newton(np.array([0.0]), np.array([1.0]), np.array([[1.0]]))
+
+        self.assertTrue(np.all(np.isfinite(y)), f"got {y}")
+        self.assertTrue(np.isfinite(res))
 
 
 # RUN TESTS LOCALLY ====================================================================

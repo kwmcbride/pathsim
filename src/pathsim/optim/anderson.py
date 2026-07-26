@@ -8,10 +8,11 @@
 # IMPORTS ==============================================================================
 
 import numpy as np
+import warnings
 
 from collections import deque
 
-from scipy.linalg import lu_factor, lu_solve
+from scipy.linalg import lu_factor, lu_solve, LinAlgWarning
 
 from .numerical import num_jac
 
@@ -22,6 +23,86 @@ from .._constants import (
     SOL_TOLERANCE_FPI,
     SOL_ITERATIONS_MAX
     )
+
+
+# HELPERS ==============================================================================
+
+def _factorize(A):
+    """LU factorization of the Newton matrix, or 'None' if it is singular.
+
+    The Newton matrix is structurally singular whenever a state's derivative
+    does not depend on that state. A 'PID' is the canonical case: its integrator
+    state has ``dx/dt = u``, so the corresponding row of the Jacobian is zero.
+    The same holds for any block whose dynamics are a pure quadrature.
+
+    'scipy.linalg.lu_factor' does not raise on a singular matrix, it emits a
+    'LinAlgWarning' and leaves a zero pivot behind, after which 'lu_solve'
+    returns 'inf'/'nan'. Those propagate silently into the block state and only
+    surface many iterations later, in a different place, as an SVD failure
+    inside the anderson least squares. Detecting it here keeps the failure where
+    its cause is.
+
+    Parameters
+    ----------
+    A : np.ndarray
+        Newton matrix
+
+    Returns
+    -------
+    lu : tuple, None
+        factorization for 'lu_solve', or 'None' if 'A' is singular
+    """
+    if A.size == 0:
+        return None
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", LinAlgWarning)
+        _lu, _piv = lu_factor(A)
+
+    #a zero pivot on the diagonal of 'U' means singular, scaled to the matrix
+    _scale = np.max(np.abs(A))
+    if _scale == 0.0:
+        return None
+    if np.min(np.abs(np.diag(_lu))) <= np.finfo(float).eps * _scale * len(A):
+        return None
+
+    return _lu, _piv
+
+
+
+def _singular_step(A, res):
+    """Newton correction for a singular Newton matrix.
+
+    Newton is only defined on the range of 'A'. There the pseudo-inverse gives
+    the usual correction; on the null space the residual carries no information
+    about the state, so there is no correction to make and the entry is left to
+    the outer iteration.
+
+    Substituting a plain fixed-point step 'x <- g' on the null space was tried
+    and is worse: on a closed loop it injects the full residual every sweep and
+    the iteration diverges rather than stalling.
+
+    Parameters
+    ----------
+    A : np.ndarray
+        singular Newton matrix
+    res : np.ndarray
+        fixed-point residual 'g - x'
+
+    Returns
+    -------
+    dx : np.ndarray
+        correction, subtracted from the current iterate
+    """
+    _U, _s, _Vt = np.linalg.svd(A)
+    _tol = np.finfo(float).eps * (_s[0] if _s.size else 0.0) * len(A)
+    _ok = _s > _tol
+
+    #pseudo-inverse on the range of 'A'
+    _inv = np.where(_ok, 1.0 / np.where(_ok, _s, 1.0), 0.0)
+    _dx = _Vt.T @ (_inv * (_U.T @ res))
+
+    return _dx
 
 
 # CLASS ================================================================================
@@ -343,22 +424,44 @@ class NewtonAnderson(Anderson):
 
         #early exit for scalar or purely vectorial values
         if _res.size == 1 or np.ndim(_jac) == 1:
-            
-            return _x - _res / (_jac - 1.0), np.linalg.norm(_res)
+
+            _den = np.broadcast_to(
+                np.atleast_1d(np.asarray(_jac, dtype=float).flatten() - 1.0),
+                _res.shape
+                )
+
+            #a vanishing denominator is the scalar face of a singular Newton
+            #matrix: the residual does not depend on the state in that
+            #direction, so there is no Newton correction to make. An 'Integrator'
+            #hits this exactly ('dx/dt = u', Jacobian 0), and so does any block
+            #whose Jacobian passes through zero, e.g. 'dx/dt = -x**2 + u' at
+            #'x = 0'. Dividing anyway yields inf/nan which propagates through the
+            #connections into other blocks and only surfaces much later as an SVD
+            #failure inside the anderson least squares. Leave those entries to
+            #the anderson step, which is what drives them through the system.
+            #a vanishing denominator is the scalar face of a singular Newton
+            #matrix, handled the same way: no correction where Newton is
+            #undefined, see '_singular_step'.
+            _ok = np.abs(_den) > np.finfo(float).eps
+            _dx = np.where(_ok, _res / np.where(_ok, _den, 1.0), 0.0)
+
+            return _x - _dx, np.linalg.norm(_res)
 
         #vectorial values (newton raphson), Newton matrix 'jac - I'
         _A = _jac - np.eye(len(_res))
 
         #reuse the cached factorization while the Newton matrix is unchanged
         #(constant jacobian across iterations / stages), refactor otherwise
-        if self._A is not None and _A.shape == self._A.shape \
-            and np.array_equal(_A, self._A):
-            _lu = self._lu
-        else:
-            _lu = lu_factor(_A)
-            self._A, self._lu = _A.copy(), _lu
+        if self._A is None or _A.shape != self._A.shape \
+            or not np.array_equal(_A, self._A):
+            self._A, self._lu = _A.copy(), _factorize(_A)
 
-        return _x - lu_solve(_lu, _res), np.linalg.norm(_res)
+        #singular Newton matrix -> pseudo-inverse where Newton is defined,
+        #plain fixed-point where it is not
+        if self._lu is None:
+            return _x - _singular_step(_A, _res), np.linalg.norm(_res)
+
+        return _x - lu_solve(self._lu, _res), np.linalg.norm(_res)
 
 
     def step(self, x, g, jac=None):
