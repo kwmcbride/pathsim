@@ -1183,6 +1183,100 @@ class TestSimulationAlgebraicLoop(unittest.TestCase):
         self.assertGreaterEqual(len(B.outputs), 1)
 
 
+class TestSteadyStateSingularJacobian(unittest.TestCase):
+    """
+    Regression test for a crash in 'steadystate' on systems whose blocks have a
+    singular Newton matrix.
+
+    A 'PID' has 'dx/dt = u' for its integrator state and a 'DynamicalSystem'
+    with 'dx/dt = -x**2 + u' has a zero Jacobian at 'x = 0'. Both make the
+    Newton matrix 'jac - I' singular, which used to produce inf/nan silently and
+    surface many iterations later, in an unrelated place, as
+    'LinAlgError: SVD did not converge in Linear Least Squares'.
+    """
+
+    def _closed_loop(self):
+        from pathsim.blocks import DynamicalSystem
+        from pathsim.blocks.ctrl import PID
+
+        ref, err = Constant(1.0), Adder("+-")
+        ctrl = PID(Kp=1.0, Ki=2.0, Kd=0.0, f_max=50)
+        plant = DynamicalSystem(
+            func_dyn=lambda x, u, t: -x**2 + u,
+            func_alg=lambda x, u, t: x,
+            initial_value=1.0,
+            jac_dyn=lambda x, u, t: -2*x
+            )
+        Sim = Simulation(
+            blocks=[ref, err, ctrl, plant, Scope()],
+            connections=[
+                Connection(ref, err[0]),
+                Connection(plant, err[1]),
+                Connection(err, ctrl),
+                Connection(ctrl, plant),
+                Connection(plant, Scope())
+                ],
+            dt=0.01, log=False
+            )
+        return Sim, ctrl, plant
+
+
+    def test_no_linalg_error(self):
+        """the failure mode is a truthful convergence report, not an SVD crash
+
+        This system is not solvable by the block-local steady-state scheme, so
+        it is expected to report non-convergence. What it must not do is crash
+        somewhere unrelated.
+        """
+        Sim, _, _ = self._closed_loop()
+
+        try:
+            Sim.steadystate()
+        except np.linalg.LinAlgError as exc:
+            self.fail(f"singular Newton matrix crashed the solve: {exc}")
+        except RuntimeError:
+            pass
+
+
+    def test_states_stay_finite(self):
+        """no inf/nan leaks into the block states"""
+        Sim, ctrl, plant = self._closed_loop()
+
+        try:
+            Sim.steadystate()
+        except RuntimeError:
+            pass
+
+        self.assertTrue(np.all(np.isfinite(np.atleast_1d(ctrl.state))))
+        self.assertTrue(np.all(np.isfinite(np.atleast_1d(plant.state))))
+
+
+    def test_integrator_loop_still_converges(self):
+        """a solvable system with the same singularity is unaffected
+
+        An 'Integrator' has a zero Jacobian too, so it takes the same code path;
+        closing a stable loop around it must still reach its equilibrium.
+        """
+        src, add, integ, gain = (
+            Constant(2.0), Adder("+-"), Integrator(0.0), Amplifier(1.0)
+            )
+        Sim = Simulation(
+            blocks=[src, add, integ, gain],
+            connections=[
+                Connection(src, add[0]),
+                Connection(integ, gain),
+                Connection(gain, add[1]),
+                Connection(add, integ)
+                ],
+            dt=0.01, log=False
+            )
+
+        Sim.steadystate()
+
+        #dx/dt = u - x -> x = u = 2
+        self.assertAlmostEqual(float(np.atleast_1d(integ.state)[0]), 2.0, places=4)
+
+
 # RUN TESTS LOCALLY ====================================================================
 
 if __name__ == '__main__':
