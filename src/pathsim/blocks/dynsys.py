@@ -93,7 +93,8 @@ class DynamicalSystem(Block):
         alg_length : int
             length of algebraic path
         """
-        x, u = self.engine.state, self.inputs.to_array()
+        x = self.engine.state if self.engine else self.initial_value
+        u = self.inputs.to_array()
         has_passthrough = np.any(self.op_alg.jac_u(x, u, 0.0))
         return int(has_passthrough)
 
