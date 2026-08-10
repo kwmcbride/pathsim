@@ -16,6 +16,7 @@ from pathsim.subsystem import Subsystem, Interface
 
 #for testing
 from pathsim.blocks import Block
+from pathsim.blocks.dynsys import DynamicalSystem
 from pathsim.connection import Connection
 
 
@@ -39,6 +40,34 @@ class TestSubsystem(unittest.TestCase):
     """
     test implementation of the 'Subsystem' class
     """
+
+    def test_dynamical_system_without_solver(self):
+        """Test nesting a custom dynamical system before solver assignment"""
+        class Mini(DynamicalSystem):
+            def __init__(self):
+                super().__init__(
+                    func_dyn=lambda x, u, t: -x + u,
+                    func_alg=lambda x, u, t: x,
+                    initial_value=np.zeros(1),
+                )
+                self.inputs.resize(1)
+
+        class Nested(Subsystem):
+            def __init__(self):
+                block, interface = Mini(), Interface()
+                interface.register_port_map(
+                    port_map_in={"y": 0}, port_map_out={"u": 0}
+                )
+                super().__init__(
+                    [interface, block],
+                    [
+                        Connection(interface["u"], block),
+                        Connection(block, interface["y"]),
+                    ],
+                )
+
+        self.assertIsInstance(Nested(), Subsystem)
+
 
     def test_init(self):
 

@@ -55,6 +55,15 @@ class TestDynamicalSystem(unittest.TestCase):
         self.assertTrue(np.all(D.initial_value == np.array([1.0, 2.0])))
 
 
+    def test_len_without_solver(self):
+        """Test algebraic passthrough detection before solver initialization"""
+        D = DynamicalSystem(
+            func_alg=lambda x, u, t: x + u,
+            initial_value=1.0,
+        )
+        self.assertEqual(len(D), 1)
+
+
     def test_len_passthrough(self):
         """Test algebraic passthrough detection"""
         
