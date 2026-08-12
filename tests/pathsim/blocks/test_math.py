@@ -507,6 +507,19 @@ class TestMatrix(unittest.TestCase):
         self.assertEqual(len(B.outputs), 2)
         self.assertTrue(np.allclose(B.A, A))
 
+    def test_init_from_nested_list(self):
+        """test initialization from array-like input (nested list, tuples)"""
+        for A in ([[1, 2], [3, 4]], ((1, 2), (3, 4))):
+            B = Matrix(A=A)
+            self.assertEqual(len(B.inputs), 2)
+            self.assertEqual(len(B.outputs), 2)
+            self.assertTrue(np.allclose(B.A, np.array([[1, 2], [3, 4]])))
+
+    def test_init_rejects_non_2d(self):
+        """a 1-d array-like is still rejected"""
+        with self.assertRaises(ValueError):
+            Matrix(A=[1.0, 2.0])
+
     def test_init_custom_rectangular(self):
         """test initialization with non-square matrix"""
         A = np.array([[1, 2, 3], [4, 5, 6]])  # 2x3 matrix

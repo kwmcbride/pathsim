@@ -601,9 +601,9 @@ class Matrix(Math):
 
     Parameters
     ----------
-    A : np.ndarray
-        matrix, 2d array with dim=2
-        
+    A : array_like
+        matrix, 2d array-like (nested lists are accepted and converted)
+
     Attributes
     ----------
     op_alg : Operator
@@ -612,6 +612,10 @@ class Matrix(Math):
 
     def __init__(self, A=np.eye(1)):
         super().__init__()
+
+        # accept any array-like: a nested list is the natural way to write a
+        # small matrix inline, and every other block parameter takes one
+        A = np.asarray(A, dtype=float)
 
         # check matrix dimension and shape
         if not A.ndim == 2:
