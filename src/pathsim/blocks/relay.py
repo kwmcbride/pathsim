@@ -98,10 +98,23 @@ class Relay(Block):
                 ),
             ]
 
+        # start in the lower relay state
+        self.outputs[0] = self.value_down
+
 
     def __len__(self):
         """This block has no direct passthrough"""
         return 0
+
+
+    def reset(self):
+        """Reset the block and return to the lower relay state.
+
+        The base reset zeroes the outputs, which is not a relay state -- the
+        output must land back on `value_down`, same as after construction.
+        """
+        super().reset()
+        self.outputs[0] = self.value_down
 
 
     def update(self, t):

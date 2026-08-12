@@ -36,6 +36,20 @@ class TestRelay(unittest.TestCase):
         self.assertIsInstance(R.events[1], ZeroCrossingDown)
 
 
+    def test_initial_output_is_a_relay_state(self):
+
+        #a two-state relay must start in one of its two states, not at the
+        #register default -> 'value_down' before any threshold crossing
+        R = Relay(threshold_up=0.5, threshold_down=-0.5, value_up=1.0, value_down=-1.0)
+        self.assertEqual(R.outputs[0], -1.0)
+
+        #and it must return there after a reset, not fall back to zero
+        R.events[0].func_act(0)
+        self.assertEqual(R.outputs[0], 1.0)
+        R.reset()
+        self.assertEqual(R.outputs[0], -1.0)
+
+
     def test_init_custom(self):
 
         R = Relay(
