@@ -123,7 +123,9 @@ class TestWrapper(unittest.TestCase):
             de, cl, ra = ev.detect(t)
             self.assertTrue(de)
             self.assertTrue(cl)
-            self.assertEqual(ra, 0)
+            #detect(t) is called with t at the end of the step, so an event
+            #sitting exactly on t is at the end of it too
+            self.assertEqual(ra, 1)
             ev.buffer(t)
             ev.resolve(t)
 
