@@ -89,6 +89,7 @@ scp.plot()
 - [Documentation](https://docs.pathsim.org) — tutorials, examples, and API reference
 - [Homepage](https://pathsim.org) — overview and getting started
 - [Contributing](https://docs.pathsim.org/pathsim/latest/contributing) — how to contribute
+- [Consulting & commercial support](https://milanrother.com/consulting/) — integration, custom blocks, migration from closed tools
 
 ## Citation
 
