@@ -82,6 +82,56 @@ class Schedule(Event):
         return self.t_start + len(self._times) * self.t_period
 
 
+    def _spacing(self):
+        """
+        return the time between the upcoming event and its successor,
+        used to bound the effective detection tolerance
+        """
+        return self.t_period
+
+
+    def _tolerance_at(self, t):
+        """Effective detection tolerance at evaluation time 't'.
+
+        The simulation time is accumulated by repeated addition of the
+        timestep, so it drifts away from the exact schedule times by a
+        floating point error that grows with 't'. The configured absolute
+        tolerance cannot cover this, which makes ticks that land within a
+        few ulp of a step boundary flip between neighboring timesteps and
+        lose the final tick of a run. The widened tolerance absorbs that
+        drift while staying far below the schedule spacing, so no genuine
+        tick can be swallowed.
+
+        Parameters
+        ----------
+        t : float
+            evaluation time for detection
+
+        Returns
+        -------
+        float
+            effective tolerance for the close-to-event check
+        """
+        return max(self.tolerance, min(1e-10 * abs(t), 0.1 * self._spacing()))
+
+
+    def resolve(self, t):
+        """Resolve the event at the exact scheduled time.
+
+        The caller passes the numerically reached time, which carries the
+        accumulated drift of the simulation clock. The schedule knows its
+        own exact event time, so that is what gets recorded and handed to
+        the action function - timestamps land exactly on the schedule.
+
+        Parameters
+        ----------
+        t : float
+            evaluation time for event resolution (ignored in favor of
+            the exact scheduled time)
+        """
+        super().resolve(self._next())
+
+
     def estimate(self, t):
         """Estimate the time until the next scheduled event.
 
@@ -135,13 +185,18 @@ class Schedule(Event):
         if self.t_end is not None and t_next > self.t_end:
             self.off()
             return False, False, 1.0
-        
-        #no event -> quit early
-        if t_next > t:
+
+        #effective tolerance, covering the drift of the simulation clock
+        _tol = self._tolerance_at(t)
+
+        #no event -> quit early (a tick within tolerance of the step end
+        #counts as inside the step, otherwise clock drift pushes it into
+        #the next step and the final tick of a run is lost)
+        if t_next > t + _tol:
             return False, False, 1.0
 
         #are we close enough to the scheduled event?
-        if abs(t_next - t) <= self.tolerance:
+        if abs(t_next - t) <= _tol:
             return True, True, 1.0
 
         #unpack history
@@ -149,7 +204,7 @@ class Schedule(Event):
 
         #have we already passed the event -> first timestep
         if _t >= t_next:
-            return True, True, 0.0        
+            return True, True, 0.0
 
         #whats the timestep ratio?
         ratio = (t_next - _t) / np.clip(t - _t, TOLERANCE, None)
@@ -214,9 +269,19 @@ class ScheduleList(Schedule):
     def _next(self):
         """return the next event from the event time list by index"""
         _n = len(self._times)
-        if _n < len(self.times_evt): 
+        if _n < len(self.times_evt):
             return self.times_evt[_n]
         return self.times_evt[-1]
+
+
+    def _spacing(self):
+        """return the gap between the upcoming event and its successor
+        in the time list, used to bound the effective detection tolerance
+        """
+        _n = len(self._times)
+        if _n + 1 < len(self.times_evt):
+            return self.times_evt[_n + 1] - self.times_evt[_n]
+        return float("inf")
 
 
     def detect(self, t):
@@ -247,12 +312,15 @@ class ScheduleList(Schedule):
         #get next event time
         t_next = self._next()
 
-        #no event -> quit early
-        if t_next > t:
+        #effective tolerance, covering the drift of the simulation clock
+        _tol = self._tolerance_at(t)
+
+        #no event -> quit early (see 'Schedule.detect')
+        if t_next > t + _tol:
             return False, False, 1.0
 
         #are we close enough to the scheduled event?
-        if abs(t_next - t) <= self.tolerance:
+        if abs(t_next - t) <= _tol:
             return True, True, 1.0
 
         #unpack history
@@ -260,7 +328,7 @@ class ScheduleList(Schedule):
 
         #have we already passed the event -> first timestep
         if _t >= t_next:
-            return True, True, 0.0        
+            return True, True, 0.0
 
         #whats the timestep ratio?
         ratio = (t_next - _t) / np.clip(t - _t, TOLERANCE, None)
