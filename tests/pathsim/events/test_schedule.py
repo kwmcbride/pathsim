@@ -132,6 +132,86 @@ class TestSchedule(unittest.TestCase):
             self.assertAlmostEqual(got, want, places=12)
 
 
+    def test_resolve_records_the_exact_scheduled_time(self):
+
+        #the caller passes the numerically reached time which carries the
+        #drift of the simulation clock, but the schedule knows its own exact
+        #event time and records that instead
+
+        fired = []
+        S = Schedule(t_start=0, t_period=0.01, func_act=fired.append)
+
+        S.resolve(0.0)
+        S.resolve(0.010000000000000002)   #one ulp of drift
+        S.resolve(0.020000000000000004)
+
+        self.assertEqual(S._times, [0.0, 0.01, 0.02])
+        self.assertEqual(fired, [0.0, 0.01, 0.02])
+
+
+    def test_detect_absorbs_clock_drift_at_step_boundary(self):
+
+        #after many additions of dt the simulation clock drifts away from
+        #the exact schedule times; a tick that lands a few ulp behind the
+        #end of the step must still be detected in that step, otherwise it
+        #slips into the next one and the final tick of a run is lost
+
+        S = Schedule(t_start=0, t_period=0.01)
+        S._times = [0.0] * 10   #10 ticks resolved, next is t=0.1
+
+        #step end one ulp below the scheduled tick at t=0.1
+        t_drifted = np.nextafter(0.1, 0.0)
+        self.assertLess(t_drifted, 0.1)
+
+        S.buffer(t_drifted - 0.01)
+        d, c, r = S.detect(t_drifted)
+
+        self.assertTrue(d)
+        self.assertTrue(c)
+        self.assertEqual(r, 1.0)
+
+
+    def test_long_run_ticks_are_complete_and_on_grid(self):
+
+        #integration test for the drift regression: over thousands of steps
+        #every tick must fire exactly once, stamped exactly on the schedule,
+        #including the final tick at the end of the run
+
+        from pathsim import Simulation, Connection
+        from pathsim.blocks import Constant, Scope
+
+        fired = []
+        S = Schedule(t_start=0, t_period=0.01, func_act=fired.append)
+
+        src, sco = Constant(1.0), Scope()
+        sim = Simulation(
+            [src, sco],
+            [Connection(src, sco)],
+            events=[S],
+            dt=0.01,
+            log=False
+            )
+        sim.run(30.0, reset=True)
+
+        #every recorded time is an exact multiple of the period
+        ks = np.round(np.array(fired) / 0.01)
+        self.assertEqual(np.max(np.abs(np.array(fired) - ks * 0.01)), 0.0)
+
+        #no tick lost, none doubled, final tick at t=30 included
+        self.assertTrue(np.array_equal(ks, np.arange(len(fired))))
+        self.assertIn(30.0, fired)
+
+
+    def test_effective_tolerance_is_capped_by_the_period(self):
+
+        #the drift allowance must stay far below the schedule spacing so
+        #no genuine tick can be absorbed by the widened tolerance
+
+        S = Schedule(t_start=0, t_period=1e-12)
+
+        self.assertLessEqual(S._tolerance_at(1e6), 0.1e-12)
+
+
 class TestScheduleList(unittest.TestCase):
     """
     Test the implementation of the 'ScheduleList' event class.

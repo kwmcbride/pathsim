@@ -150,8 +150,68 @@ class TestScope(unittest.TestCase):
 
 
     def test_sampling_period(self):
-        #TODO: implement this in the simulation loop because the 'Schedule' event
-        pass
+
+        #event based sampling records in the Schedule action, stamped with
+        #the exact scheduled times: uniform grid, no tick lost to clock
+        #drift, and the final tick of the run included
+
+        from pathsim import Simulation, Connection
+        from pathsim.blocks import Constant
+
+        for period, stop in [(1e-3, 3.0), (1e-2, 30.0), (5e-4, 2.0)]:
+
+            src = Constant(1.0)
+            sco = Scope(sampling_period=period)
+
+            sim = Simulation(
+                [src, sco],
+                [Connection(src, sco)],
+                dt=period,
+                log=False
+                )
+            sim.run(stop)
+
+            time, data = sco.read()
+
+            #every timestamp is an exact multiple of the period
+            ks = np.round(time / period)
+            self.assertEqual(np.max(np.abs(time - ks * period)), 0.0)
+
+            #contiguous grid from t=0, nothing lost, nothing doubled
+            self.assertTrue(np.array_equal(ks, np.arange(len(time))))
+
+            #the tick at exactly the end of the run is included
+            self.assertIn(stop, time)
+
+            #data recorded for every sample
+            self.assertEqual(data.shape[-1], len(time))
+
+
+    def test_sampling_period_t_wait(self):
+
+        #with a wait time the schedule starts at 't_wait' and the grid
+        #is anchored there
+
+        from pathsim import Simulation, Connection
+        from pathsim.blocks import Constant
+
+        src = Constant(1.0)
+        sco = Scope(sampling_period=0.1, t_wait=0.25)
+
+        sim = Simulation(
+            [src, sco],
+            [Connection(src, sco)],
+            dt=0.01,
+            log=False
+            )
+        sim.run(1.0)
+
+        time, _ = sco.read()
+
+        self.assertEqual(time[0], 0.25)
+        ks = np.round((time - 0.25) / 0.1)
+        self.assertEqual(np.max(np.abs(time - (0.25 + ks * 0.1))), 0.0)
+        self.assertTrue(np.array_equal(ks, np.arange(len(time))))
 
 
     def test_t_wait(self):
