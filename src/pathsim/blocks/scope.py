@@ -53,12 +53,9 @@ class Scope(Block):
     _incremental_idx : int
         index for incremental reading of accumulated data since last
         call of incremental read
-    _sample_next_timestep : bool
-        flag to indicate this is a timestep to sample, only used for
-        event based sampling when `sampling_period` is provided as an arg
     events : list[Schedule]
         internal scheduled event for periodic input sampling when
-        `sampling_period` is provided
+        `sampling_period` is provided, recording directly in its action
     """
     
     input_port_labels = None
@@ -86,18 +83,15 @@ class Scope(Block):
         #sampling produces discrete time behavior
         if not (sampling_period is None):
 
-            #flag to indicate this is a timestep to sample
-            self._sample_next_timestep = False
-            
-            #internal scheduled list event
-            def _sample(t):
-                self._sample_next_timestep = True
-
+            #internal scheduled event, recording directly in its action so the
+            #timestamps are the scheduled times and no tick can be lost
+            #(a flag deferred to the end of the timestep collapses two ticks
+            #that land in one step into a single sample)
             self.events = [
                 Schedule(
                     t_start=t_wait,
                     t_period=sampling_period,
-                    func_act=_sample
+                    func_act=self._record
                     )
             ]
 
@@ -171,36 +165,41 @@ class Scope(Block):
                 )
 
 
-    def sample(self, t, dt):
-        """Sample the data from all inputs. Skips duplicate timestamps to maintain
-        unique time points in the recording.
-
-        If `sampling_period` is provided, this depends on the flag `_sample_next_timestep`,
-        set by the internal `Schedule` event.
+    def _record(self, t):
+        """Append one sample of all inputs at time 't'. Skips duplicate
+        timestamps to maintain unique time points in the recording.
 
         Parameters
         ----------
         t : float
-            evaluation time for sampling
+            timestamp for the sample
         """
-        #determine if we should sample
-        if self.sampling_period is None:
-            should_sample = t >= self.t_wait
-        elif self._sample_next_timestep:
-            should_sample = True
-            self._sample_next_timestep = False
-        else:
-            should_sample = False
-
-        if not should_sample:
-            return
-
         #skip duplicate timestamps (can happen when continuing simulation)
         if self.recording_time and self.recording_time[-1] == t:
             return
 
         self.recording_time.append(t)
         self.recording_data.append(self.inputs.to_array())
+
+
+    def sample(self, t, dt):
+        """Sample the data from all inputs at every timestep.
+
+        Only active without a `sampling_period`. With one, the internal
+        `Schedule` event records in its action instead, stamped with the
+        scheduled time rather than the end of the enclosing timestep.
+
+        Parameters
+        ----------
+        t : float
+            evaluation time for sampling
+        """
+        #event based sampling records in the Schedule action
+        if self.sampling_period is not None:
+            return
+
+        if t >= self.t_wait:
+            self._record(t)
 
 
     def plot(self, *args, **kwargs):
@@ -453,8 +452,6 @@ class Scope(Block):
         json_data, npz_data = super().to_checkpoint(prefix, recordings=recordings)
 
         json_data["_incremental_idx"] = self._incremental_idx
-        if hasattr(self, '_sample_next_timestep'):
-            json_data["_sample_next_timestep"] = self._sample_next_timestep
 
         if recordings and self.recording_time:
             npz_data[f"{prefix}/recording_time"] = np.array(self.recording_time)
@@ -468,8 +465,6 @@ class Scope(Block):
         super().load_checkpoint(prefix, json_data, npz)
 
         self._incremental_idx = json_data.get("_incremental_idx", 0)
-        if hasattr(self, '_sample_next_timestep'):
-            self._sample_next_timestep = json_data.get("_sample_next_timestep", False)
 
         #restore recordings if present
         rt_key = f"{prefix}/recording_time"
